@@ -612,6 +612,117 @@ void zscript_free_config_entries(const char ***names);
 
 void clearConsole();
 
+
+enum scr_timing
+{
+	//0
+	SCR_TIMING_START_FRAME, SCR_TIMING_POST_COMBO_ANIM, SCR_TIMING_POST_POLL_INPUT,
+	SCR_TIMING_POST_FFCS, SCR_TIMING_POST_GLOBAL_ACTIVE,
+	//5
+	SCR_TIMING_POST_PLAYER_ACTIVE, SCR_TIMING_POST_DMAPDATA_ACTIVE,
+	SCR_TIMING_POST_DMAPDATA_PASSIVESUBSCREEN, SCR_TIMING_POST_COMBOSCRIPT,
+	SCR_TIMING_POST_PUSHBLOCK,
+	//10
+	SCR_TIMING_POST_ITEMSPRITE_SCRIPT, SCR_TIMING_POST_ITEMSPRITE_ANIMATE,
+	SCR_TIMING_POST_NPC_ANIMATE, SCR_TIMING_POST_EWPN_ANIMATE, SCR_TIMING_POST_EWPN_SCRIPT,
+	//15
+	SCR_TIMING_POST_OLD_ITEMDATA_SCRIPT, SCR_TIMING_POST_PLAYER_ANIMATE,
+	SCR_TIMING_POST_NEW_ITEMDATA_SCRIPT, SCR_TIMING_POST_CASTING,
+	SCR_TIMING_POST_LWPN_ANIMATE,
+	//20
+	SCR_TIMING_POST_DECOPARTICLE_ANIMATE, SCR_TIMING_POST_COLLISIONS_PALETTECYCLE,
+	SCR_TIMING_WAITDRAW, SCR_TIMING_POST_GLOBAL_WAITDRAW, SCR_TIMING_POST_PLAYER_WAITDRAW,
+	//25
+	SCR_TIMING_POST_DMAPDATA_ACTIVE_WAITDRAW, SCR_TIMING_POST_DMAPDATA_PASSIVESUBSCREEN_WAITDRAW,
+	SCR_TIMING_POST_SCREEN_WAITDRAW, SCR_TIMING_POST_FFC_WAITDRAW, SCR_TIMING_POST_COMBO_WAITDRAW,
+	//30
+	SCR_TIMING_POST_ITEM_WAITDRAW, SCR_TIMING_POST_NPC_WAITDRAW, SCR_TIMING_POST_EWPN_WAITDRAW,
+	SCR_TIMING_POST_LWPN_WAITDRAW, SCR_TIMING_POST_ITEMSPRITE_WAITDRAW,
+	//35
+	SCR_TIMING_PRE_DRAW, SCR_TIMING_POST_DRAW, SCR_TIMING_POST_STRINGS, SCR_TIMING_END_FRAME,
+	SCR_NUM_TIMINGS
+};
+enum
+{
+	GENSCR_ST_RELOAD,
+	GENSCR_ST_CONTINUE,
+	GENSCR_ST_CHANGE_SCREEN,
+	GENSCR_ST_CHANGE_DMAP,
+	GENSCR_ST_CHANGE_LEVEL,
+	GENSCR_NUMST
+};
+
+struct user_genscript
+{
+	//Saved vars
+	bool doscript;
+	std::vector<int32_t> data;
+	word exitState;
+	word reloadState;
+	int32_t initd[8];
+private:
+	size_t _dataSize;
+public:
+	//Temp Vars
+	bool initialized;
+	bool wait_atleast;
+	scr_timing waituntil;
+	refInfo ri;
+	int32_t stack[MAX_SCRIPT_REGISTERS];
+	
+	user_genscript(){clear();}
+	void clear()
+	{
+		doscript = false;
+		initialized = false;
+		wait_atleast = true;
+		waituntil = SCR_TIMING_START_FRAME;
+		exitState = 0;
+		reloadState = 0;
+		ri.Clear();
+		memset(stack, 0, sizeof(stack));
+		memset(initd, 0, sizeof(initd));
+		_dataSize = 0;
+		data.clear();
+		data.shrink_to_fit();
+	}
+	void launch()
+	{
+		doscript = true;
+		initialized = false;
+		wait_atleast = true;
+		waituntil = SCR_TIMING_START_FRAME;
+		ri.Clear();
+		memset(stack, 0, sizeof(stack));
+	}
+	void quit()
+	{
+		doscript = false;
+	}
+	size_t dataSize() const
+	{
+		return _dataSize;
+	}
+	void dataResize(int32_t sz)
+	{
+		sz = vbound(sz, 0, 214748);
+		if(_dataSize == size_t(sz)) return;
+		_dataSize = sz;
+		data.resize(_dataSize, 0);
+	}
+	void timeExit(byte exState)
+	{
+		if(!doscript) return;
+		if(exitState & (1<<exState))
+			quit();
+		else if(reloadState & (1<<exState))
+			launch();
+	}
+};
+extern user_genscript user_scripts[NUMSCRIPTSGENERIC];
+extern int32_t genscript_timing;
+void timeExitAllGenscript(byte exState);
+
 class FFScript
 {
 	
@@ -652,6 +763,8 @@ void runWarpScripts(bool waitdraw);
 void runF6Engine();
 void runOnDeathEngine();
 void runOnLaunchEngine();
+void runGenericPassiveEngine(int32_t scrtm);
+bool runGenericFrozenEngine(const word script);
 bool runActiveSubscreenScriptEngine();
 bool runOnMapScriptEngine();
 void doScriptMenuDraws();
@@ -691,6 +804,7 @@ void do_ConvertCase(const bool v);
 void do_stricmp();
 void do_strnicmp();
 
+void do_getgenericscript();
 void do_getcomboscript();
 void do_getnpcscript();
 void do_getlweaponscript();
@@ -1651,6 +1765,7 @@ static void setHeroBigHitbox(bool v);
 	static void do_loaddropset(const bool v);
 	static void do_loadbottle(const bool v);
 	static void do_loadbottleshop(const bool v);
+	static void do_loadgenericdata(const bool v);
 	static void do_getDMapData_dmapname(const bool v);
 	static void do_setDMapData_dmapname(const bool v);
 	static void do_getDMapData_dmaptitle(const bool v);
@@ -3018,8 +3133,19 @@ enum ASM_DEFINE
 	FILEOWN,
 	DIRECTORYOWN,
 	RNGOWN,
+	LOADGENERICDATA,
+	RUNGENFRZSCR,
+	WAITTO,
+	GETGENERICSCRIPT,
+	KILLPLAYER,
+	DEGTORAD,
+	RADTODEG,
+	LWPNMAKEANGULAR,
+	EWPNMAKEANGULAR,
+	LWPNMAKEDIRECTIONAL,
+	EWPNMAKEDIRECTIONAL,
 	
-	NUMCOMMANDS           //0x01B6
+	NUMCOMMANDS           //0x01BB
 };
 
 
@@ -4444,8 +4570,61 @@ enum ASM_DEFINE
 #define SHOWNMSG                0x1420
 #define COMBODTRIGGERFLAGS2     0x1421
 #define COMBODTRIGGERBUTTON     0x1422
+#define REFGENERICDATA          0x1423
+#define GENDATARUNNING          0x1424
+#define GENDATASIZE             0x1425
+#define GENDATAEXITSTATE        0x1426
+#define GENDATADATA             0x1427
+#define GENDATAINITD            0x1428
+#define GENDATARELOADSTATE      0x1429
+#define COMBODCSET2FLAGS        0x142A
+#define HEROIMMORTAL            0x142B
+#define NPCCANFLICKER           0x142C
 
-#define NUMVARIABLES         	0x1423
+#define NPCDROWNCLK             0x142D
+#define NPCDROWNCMB             0x142E
+#define ITEMDROWNCLK            0x142F
+#define ITEMDROWNCMB            0x1430
+#define LWPNDROWNCLK            0x1431
+#define LWPNDROWNCMB            0x1432
+#define EWPNDROWNCLK            0x1433
+#define EWPNDROWNCMB            0x1434
+#define HERODROWNCLK            0x1435
+#define HERODROWNCMB            0x1436
+#define NPCFAKEZ                0x1437
+#define ITEMFAKEZ               0x1438
+#define LWPNFAKEZ               0x1439
+#define EWPNFAKEZ               0x143A
+#define HEROFAKEZ               0x143B
+#define NPCFAKEJUMP             0x143C
+#define ITEMFAKEJUMP            0x143D
+#define LWPNFAKEJUMP            0x143E
+#define EWPNFAKEJUMP            0x143F
+#define HEROFAKEJUMP            0x1440
+#define HEROSHADOWXOFS          0x1441
+#define HEROSHADOWYOFS          0x1442
+#define NPCSHADOWXOFS           0x1443
+#define NPCSHADOWYOFS           0x1444
+#define ITEMSHADOWXOFS          0x1445
+#define ITEMSHADOWYOFS          0x1446
+#define LWPNSHADOWXOFS          0x1447
+#define LWPNSHADOWYOFS          0x1448
+#define EWPNSHADOWXOFS          0x1449
+#define EWPNSHADOWYOFS          0x144A
+#define LWPNDEGANGLE            0x144B
+#define EWPNDEGANGLE            0x144C
+#define LWPNVX                  0x144D
+#define LWPNVY                  0x144E
+#define EWPNVX                  0x144F
+#define EWPNVY                  0x1450
+#define LWPNAUTOROTATE          0x1451
+#define EWPNAUTOROTATE          0x1452
+#define IDATACOSTCOUNTER2       0x1453
+#define IDATAMAGICTIMER2        0x1454
+#define IDATACOST2              0x1455
+#define IDATAVALIDATE2          0x1456
+
+#define NUMVARIABLES         	0x1457
 
 //} End variables
 

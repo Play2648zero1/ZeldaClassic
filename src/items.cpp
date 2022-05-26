@@ -41,7 +41,7 @@ int32_t fairy_cnt=0;
 
 item::~item()
 {
-	if(itemsbuf[id].family==itype_fairy && itemsbuf[id].misc3>0 && misc>0 && !get_bit(quest_rules,qr_FIXED_FAIRY_LIMIT))
+	if(itemsbuf[id].family==itype_fairy && itemsbuf[id].misc3>0 && misc>0 && !get_bit(quest_rules,qr_OLD_FAIRY_LIMIT))
 		killfairynew(*this);
 #ifndef IS_ZQUEST
 	FFCore.deallocateAllArrays(SCRIPT_ITEMSPRITE, getUID());
@@ -54,46 +54,6 @@ bool item::animate(int32_t)
 		return false;
 	if(!screenIsScrolling()) // Because subscreen items are items, too. :p
 	{
-		/* this is the code used for weapons 
-		
-		if ( moveflags & FLAG_OBEYS_GRAV ) // from above, or if scripted
-		{
-			if(isSideViewGravity())
-			{
-				if(!_walkflag(x,y+16,0))
-				{
-				y+=fall/100;
-				
-				if(fall <= (int32_t)zinit.terminalv)
-				{
-					fall += (zinit.gravity2 / 100);
-				}
-				}
-				else
-				{
-				if(fall!=0 && !(step>0 && dir==up))  // Don't fix pos if still moving through solidness
-					y-=(int32_t)y%8; // Fix position
-					
-				fall = 0;
-				}
-				
-				if(y>192) dead=0;  // Out of bounds
-			}
-			else
-			{
-				z-=fall/100;
-				
-				if(z<=0)
-				{
-				z = fall = 0;
-				}
-				else if(fall <= (int32_t)zinit.terminalv)
-				{
-				fall += (zinit.gravity2 / 100);
-				}
-			}
-		} 
-		*/
 		if(fallclk > 0)
 		{
 			if(fallclk == PITFALL_FALL_FRAMES && fallCombo) sfx(combobuf[fallCombo].attribytes[0], pan(x.getInt()));
@@ -166,35 +126,57 @@ bool item::animate(int32_t)
 		{
 			if ( moveflags & FLAG_OBEYS_GRAV ) //if the user set item->Gravity = false, let it float. -Z
 			{
-				z-=fall/100;
+				if (!(moveflags & FLAG_NO_FAKE_Z))
+				{
+					fakez-=fakefall/100;
 				
-				if(z<0)
-				{
-					z = 0;
-					fall = -fall/2;
+					if(fakez<0)
+					{
+						fakez = 0;
+						fakefall = -fakefall/2;
+					}
+					else if(fakez <= 1 && abs(fakefall) < (int32_t)(zinit.gravity2 / 100))
+					{
+						fakez=0;
+						fakefall=0;
+					}
+					else if(fakefall <= (int32_t)zinit.terminalv)
+					{
+						fakefall += (zinit.gravity2 / 100);
+					}
 				}
-				else if(z <= 1 && abs(fall) < (int32_t)(zinit.gravity2 / 100))
+				if (!(moveflags & FLAG_NO_REAL_Z))
 				{
-					z=0;
-					fall=0;
-				}
-				else if(fall <= (int32_t)zinit.terminalv)
-				{
-					fall += (zinit.gravity2 / 100);
+					z-=fall/100;
+					
+					if(z<0)
+					{
+						z = 0;
+						fall = -fall/2;
+					}
+					else if(z <= 1 && abs(fall) < (int32_t)(zinit.gravity2 / 100))
+					{
+						z=0;
+						fall=0;
+					}
+					else if(fall <= (int32_t)zinit.terminalv)
+					{
+						fall += (zinit.gravity2 / 100);
+					}
 				}
 			}
 			if ( moveflags & FLAG_CAN_PITFALL )
 			{
-				if(!subscreenItem && z <= 0 && !(pickup & ipDUMMY) && !(pickup & ipCHECK) && itemsbuf[id].family!=itype_fairy)
+				if(!subscreenItem && z <= 0 && fakez <= 0 && !(pickup & ipDUMMY) && !(pickup & ipCHECK) && itemsbuf[id].family!=itype_fairy)
 				{
 					fallCombo = check_pits();
 				}
 			}
 			if ( moveflags & FLAG_CAN_WATERDROWN )
 			{
-				if(!subscreenItem && z <= 0 && !(pickup & ipDUMMY) && !(pickup & ipCHECK) && itemsbuf[id].family!=itype_fairy)
+				if(!subscreenItem && z <= 0 && fakez <= 0 && !(pickup & ipDUMMY) && !(pickup & ipCHECK) && itemsbuf[id].family!=itype_fairy)
 				{
-					fallCombo = check_water();
+					drownCombo = check_water();
 				}
 			}
 		}
@@ -267,7 +249,7 @@ bool item::animate(int32_t)
 			if(o_tile/TILES_PER_ROW==(o_tile+txsz*aframe)/TILES_PER_ROW)
 				tile=o_tile+txsz*aframe;
 			else
-				tile=o_tile+(txsz*aframe)+((tysz-1)*TILES_PER_ROW)*((o_tile+txsz*aframe)/TILES_PER_ROW)-(o_tile/TILES_PER_ROW);
+				tile=o_tile+(txsz*aframe)+((tysz-1)*TILES_PER_ROW)*(((o_tile+txsz*aframe)/TILES_PER_ROW)-(o_tile/TILES_PER_ROW));
 		}
 		else
 			tile = o_tile + aframe;
@@ -278,6 +260,13 @@ bool item::animate(int32_t)
 			int32_t slot = itm->misc1;
 			size_t btype = game->get_bottle_slot(slot);
 			int32_t offset = (frames ? frames : 1) * btype;
+			if(extend > 2)
+			{
+				if(tile/TILES_PER_ROW==(tile+offset*txsz)/TILES_PER_ROW)
+					offset *= txsz;
+				else
+					offset = (offset*txsz) + ((tysz-1)*TILES_PER_ROW)*(((tile+offset*txsz)/TILES_PER_ROW)-(tile/TILES_PER_ROW));
+			}
 			tile += offset;
 		}
 #endif
@@ -309,7 +298,7 @@ void item::draw(BITMAP *dest)
 	if(pickup&ipNODRAW || tile==0)
 		return;
 		
-	if ( z > 0 && get_bit(quest_rules, qr_ITEMSHADOWS) )
+	if ( (z > 0 || fakez > 0) && get_bit(quest_rules, qr_ITEMSHADOWS) )
 	{
 		shadowtile = wpnsbuf[spr_shadow].newtile+aframe;
 		sprite::drawshadow(dest,get_bit(quest_rules, qr_TRANSSHADOWS) != 0);
@@ -355,7 +344,7 @@ item::item(zfix X,zfix Y,zfix Z,int32_t i,int32_t p,int32_t c, bool isDummy) : s
 	o_speed = itm.speed;
 	o_delay = itm.delay;
 	frames = itm.frames;
-	flip = itm.misc>>2;
+	flip = itm.misc_flags>>2;
 	family = itm.family;
 	lvl = itm.fam_type;
 	overrideFLAGS = itm.overrideFLAGS; 
@@ -384,10 +373,10 @@ item::item(zfix X,zfix Y,zfix Z,int32_t i,int32_t p,int32_t c, bool isDummy) : s
 			break;
 	}
 	
-	if(itm.misc&1)
+	if(itm.misc_flags&1)
 		flash=true;
 		
-	if(itm.misc&2)
+	if(itm.misc_flags&2)
 		twohand=true;
 		
 	anim = itm.frames>0;
@@ -477,7 +466,7 @@ void item::load_gfx(itemdata const& itm)
 	o_speed = itm.speed;
 	o_delay = itm.delay;
 	frames = itm.frames;
-	flip = itm.misc>>2;
+	flip = itm.misc_flags>>2;
 	anim = itm.frames>0;
 	aframe = aclk = 0;
 	if(do_animation && ((get_bit(quest_rules, qr_0AFRAME_ITEMS_IGNORE_AFRAME_CHANGES) ? (anim) : (frames>0))||itm.family==itype_bottle))

@@ -2210,7 +2210,8 @@ void hidden_entrance2(mapscr *s, mapscr *t, bool high16only,int32_t single) //Pe
 	{
 		//If it's an enemies->secret screen, only do the high 16 if told to
 		//That way you can have secret and burn/bomb entrance separately
-		if((!(s->flags2&fCLEARSECRET) /*Enemies->Secret*/ && single < 0) || high16only || s->flags4&fENEMYSCRTPERM)
+		bool old_enem_secret = get_bit(quest_rules,qr_ENEMIES_SECRET_ONLY_16_31);
+		if(((!(old_enem_secret && (s->flags2&fCLEARSECRET)) /*Enemies->Secret*/ && single < 0) || high16only || s->flags4&fENEMYSCRTPERM))
 		{
 			int32_t newflag = -1;
 			
@@ -3396,13 +3397,16 @@ void calc_darkroom_combos(bool scrolling)
 	}
 }
 
-void draw_screen(mapscr* this_screen, bool showhero)
+void draw_screen(mapscr* this_screen, bool showhero, bool runGeneric)
 {
 	if((GameFlags & (GAMEFLAG_SCRIPTMENU_ACTIVE|GAMEFLAG_F6SCRIPT_ACTIVE))!=0)
 	{
 		FFCore.doScriptMenuDraws();
 		return;
 	}
+	
+	if(runGeneric) FFCore.runGenericPassiveEngine(SCR_TIMING_PRE_DRAW);
+	
 	//The Plan:
 	//0: Set sideview gravity from dmaps. -Z
 	//1. Draw some layers onto scrollbuf with clipping
@@ -3688,7 +3692,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 		
 		if(!Hero.isSwimming())
 		{
-			if(Hero.getZ()>0 &&(!get_bit(quest_rules,qr_SHADOWSFLICKER)||frame&1))
+			if((Hero.getZ()>0 || Hero.getFakeZ()>0) &&(!get_bit(quest_rules,qr_SHADOWSFLICKER)||frame&1))
 			{
 				Hero.drawshadow(framebuf,get_bit(quest_rules,qr_TRANSSHADOWS)!=0);
 			}
@@ -3720,7 +3724,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 			}
 		}
 		
-		if(guys.spr(i)->z > Hero.getZ())
+		if(guys.spr(i)->z+guys.spr(i)->fakez > Hero.getZ()+Hero.getFakeZ())
 		{
 			//Jumping enemies in front of Hero.
 			guys.spr(i)->draw(framebuf);
@@ -3785,7 +3789,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 		
 		for(int32_t i=0; i<Lwpns.Count(); i++)
 		{
-			if(Lwpns.spr(i)->z > (zfix)zinit.jump_hero_layer_threshold)
+			if(Lwpns.spr(i)->z+Lwpns.spr(i)->fakez > (zfix)zinit.jump_hero_layer_threshold)
 			{
 				Lwpns.spr(i)->draw(framebuf);
 			}
@@ -3796,7 +3800,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 	
 	if(!get_bit(quest_rules,qr_ENEMIESZAXIS)) for(int32_t i=0; i<guys.Count(); i++)
 		{
-			if((isflier(guys.spr(i)->id)) || guys.spr(i)->z > (zfix)zinit.jump_hero_layer_threshold)
+			if((isflier(guys.spr(i)->id)) || (guys.spr(i)->z+guys.spr(i)->fakez) > (zfix)zinit.jump_hero_layer_threshold)
 			{
 				guys.spr(i)->draw(framebuf);
 			}
@@ -3805,7 +3809,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 	{
 		for(int32_t i=0; i<guys.Count(); i++)
 		{
-			if((isflier(guys.spr(i)->id)) || guys.spr(i)->z > 0)
+			if((isflier(guys.spr(i)->id)) || guys.spr(i)->z > 0 || guys.spr(i)->fakez > 0)
 			{
 				guys.spr(i)->draw(framebuf);
 			}
@@ -3932,6 +3936,7 @@ void draw_screen(mapscr* this_screen, bool showhero)
 	}
 	
 	set_clip_rect(scrollbuf, 0, 0, scrollbuf->w, scrollbuf->h);
+	if(runGeneric) FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DRAW);
 }
 
 void put_door(BITMAP *dest,int32_t t,int32_t pos,int32_t side,int32_t type,bool redraw,bool even_walls)
@@ -4421,7 +4426,10 @@ void openshutters()
 void loadscr(int32_t tmp,int32_t destdmap, int32_t scr,int32_t ldir,bool overlay=false)
 {
 	if(!tmp)
+	{
 		triggered_screen_secrets = false; //Reset var
+		timeExitAllGenscript(GENSCR_ST_CHANGE_SCREEN);
+	}
 	clear_to_color(darkscr_bmp_curscr, game->get_darkscr_color());
 	clear_to_color(darkscr_bmp_curscr_trans, game->get_darkscr_color());
 	clear_to_color(darkscr_bmp_scrollscr, game->get_darkscr_color());

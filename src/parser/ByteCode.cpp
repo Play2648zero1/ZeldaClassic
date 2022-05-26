@@ -847,6 +847,15 @@ string ZScript::VarToString(int32_t ID)
 		
 	case LWPNANGLE:
 		return "LWPNANGLE";
+	
+	case LWPNDEGANGLE:
+		return "LWPNDEGANGLE";
+		
+	case LWPNVX:
+		return "LWPNVX";
+		
+	case LWPNVY:
+		return "LWPNVY";
 		
 	case LWPNSTEP:
 		return "LWPNSTEP";
@@ -868,6 +877,9 @@ string ZScript::VarToString(int32_t ID)
 		
 	case LWPNANGULAR:
 		return "LWPNANGULAR";
+		
+	case LWPNAUTOROTATE:
+		return "LWPNAUTOROTATE";
 		
 	case LWPNBEHIND:
 		return "LWPNBEHIND";
@@ -939,6 +951,15 @@ string ZScript::VarToString(int32_t ID)
 	case EWPNANGLE:
 		return "EWPNANGLE";
 		
+	case EWPNDEGANGLE:
+		return "EWPNDEGANGLE";
+		
+	case EWPNVX:
+		return "EWPNVX";
+		
+	case EWPNVY:
+		return "EWPNVY";
+		
 	case EWPNSTEP:
 		return "EWPNSTEP";
 		
@@ -959,6 +980,9 @@ string ZScript::VarToString(int32_t ID)
 		
 	case EWPNANGULAR:
 		return "EWPNANGULAR";
+		
+	case EWPNAUTOROTATE:
+		return "EWPNAUTOROTATE";
 		
 	case EWPNBEHIND:
 		return "EWPNBEHIND";
@@ -1019,6 +1043,12 @@ string ZScript::VarToString(int32_t ID)
 		
 	case LWPNYOFS:
 		return "LWPNYOFS";
+	
+	case LWPNSHADOWXOFS:
+		return "LWPNSHADOWXOFS";
+		
+	case LWPNSHADOWYOFS:
+		return "LWPNSHADOWYOFS";
 		
 	case LWPNZOFS:
 		return "LWPNZOFS";
@@ -1053,6 +1083,12 @@ string ZScript::VarToString(int32_t ID)
 	case EWPNYOFS:
 		return "EWPNYOFS";
 		
+	case EWPNSHADOWXOFS:
+		return "EWPNSHADOWXOFS";
+		
+	case EWPNSHADOWYOFS:
+		return "EWPNSHADOWYOFS";
+		
 	case EWPNZOFS:
 		return "EWPNZOFS";
 		
@@ -1086,6 +1122,12 @@ string ZScript::VarToString(int32_t ID)
 	case NPCYOFS:
 		return "NPCYOFS";
 		
+	case NPCSHADOWXOFS:
+		return "NPCSHADOWXOFS";
+		
+	case NPCSHADOWYOFS:
+		return "NPCSHADOWYOFS";
+		
 	case NPCZOFS:
 		return "NPCZOFS";
 		
@@ -1116,6 +1158,12 @@ string ZScript::VarToString(int32_t ID)
 	case ITEMYOFS:
 		return "ITEMYOFS";
 		
+	case ITEMSHADOWXOFS:
+		return "ITEMSHADOWXOFS";
+		
+	case ITEMSHADOWYOFS:
+		return "ITEMSHADOWYOFS";
+		
 	case ITEMZOFS:
 		return "ITEMZOFS";
 		
@@ -1145,6 +1193,12 @@ string ZScript::VarToString(int32_t ID)
 		
 	case LINKYOFS:
 		return "LINKYOFS";
+		
+	case HEROSHADOWXOFS:
+		return "HEROSHADOWXOFS";
+		
+	case HEROSHADOWYOFS:
+		return "HEROSHADOWYOFS";
 		
 	case LINKZOFS:
 		return "LINKZOFS";
@@ -1215,11 +1269,13 @@ string ZScript::VarToString(int32_t ID)
 
 	//case IDATAFRAME: return "IDATAFRAME";
 	case IDATACOSTCOUNTER: return "IDATACOSTCOUNTER";
+	case IDATACOSTCOUNTER2: return "IDATACOSTCOUNTER2";
 	case ITEMCLASSID: return "IDATAID";
 	case IDATALTM: return "IDATALTM";
 	case IDATAPSCRIPT: return "IDATAPSCRIPT";
 	case IDATASCRIPT: return "IDATASCRIPT";
 	case IDATAMAGCOST: return "IDATAMAGCOST";
+	case IDATACOST2: return "IDATACOST2";
 	case IDATAMINHEARTS: return "IDATAMINHEARTS";
 	case IDATATILE: return "IDATATILE";
 	case IDATAMISC: return "IDATAMISC";    
@@ -1246,6 +1302,7 @@ string ZScript::VarToString(int32_t ID)
 	case IDATAUSEDEF: return "IDATAUSEDEF";
 	case IDATAWRANGE: return "IDATAWRANGE";
 	case IDATAMAGICTIMER: return "IDATAMAGICTIMER";
+	case IDATAMAGICTIMER2: return "IDATAMAGICTIMER2";
 	case IDATAUSEMVT: return "IDATAUSEMVT";
 	case IDATADURATION: return "IDATADURATION";
 	case IDATADUPLICATES: return "IDATADUPLICATES";
@@ -1871,6 +1928,7 @@ string ZScript::VarToString(int32_t ID)
 	case MAPDATAMAP: return "MAPDATAMAP";
 	case MAPDATASCREEN: return "MAPDATASCREEN";
 	case IDATAVALIDATE: return "IDATAVALIDATE";
+	case IDATAVALIDATE2: return "IDATAVALIDATE2";
 	case GAMESUSPEND: return "GAMESUSPEND";
 	case LINKOTILE: return "LINKOTILE";
 	case LINKOFLIP: return "LINKOFLIP";
@@ -2004,6 +2062,38 @@ string ZScript::VarToString(int32_t ID)
 	case NPCDSHADOWSPR: return "NPCDSHADOWSPR";
 	case NPCDSPAWNSPR: return "NPCDSPAWNSPR";
 	case NPCDDEATHSPR: return "NPCDDEATHSPR";
+	
+	case REFGENERICDATA: return "REFGENERICDATA";
+	case GENDATARUNNING: return "GENDATARUNNING";
+	case GENDATASIZE: return "GENDATASIZE";
+	case GENDATAEXITSTATE: return "GENDATAEXITSTATE";
+	case GENDATADATA: return "GENDATADATA";
+	case GENDATAINITD: return "GENDATAINITD";
+	case GENDATARELOADSTATE: return "GENDATARELOADSTATE";
+	
+	case COMBODCSET2FLAGS: return "COMBODCSET2FLAGS";
+	case HEROIMMORTAL: return "HEROIMMORTAL";
+	case NPCCANFLICKER: return "NPCCANFLICKER";
+	case NPCDROWNCLK: return "NPCDROWNCLK";
+	case NPCDROWNCMB: return "NPCDROWNCMB";
+	case ITEMDROWNCLK: return "ITEMDROWNCLK";
+	case ITEMDROWNCMB: return "ITEMDROWNCMB";
+	case LWPNDROWNCLK: return "LWPNDROWNCLK";
+	case LWPNDROWNCMB: return "LWPNDROWNCMB";
+	case EWPNDROWNCLK: return "EWPNDROWNCLK";
+	case EWPNDROWNCMB: return "EWPNDROWNCMB";
+	case HERODROWNCLK: return "HERODROWNCLK";
+	case HERODROWNCMB: return "HERODROWNCMB";
+	case NPCFAKEZ: return "NPCFAKEZ";
+	case ITEMFAKEZ: return "ITEMFAKEZ";
+	case LWPNFAKEZ: return "LWPNFAKEZ";
+	case EWPNFAKEZ: return "EWPNFAKEZ";
+	case HEROFAKEZ: return "HEROFAKEZ";
+	case NPCFAKEJUMP: return "NPCFAKEJUMP";
+	case ITEMFAKEJUMP: return "ITEMFAKEJUMP";
+	case LWPNFAKEJUMP: return "LWPNFAKEJUMP";
+	case EWPNFAKEJUMP: return "EWPNFAKEJUMP";
+	case HEROFAKEJUMP: return "HEROFAKEJUMP";
 	
 	default:
 	{
@@ -2215,6 +2305,11 @@ string OWaitdraw::toString()
     return "WAITDRAW";
 }
 
+string OWaitTo::toString()
+{
+    return "WAITTO " + getFirstArgument()->toString() + "," + getSecondArgument()->toString();
+}
+
 string ONoOp::toString()
 {
 	return "NOP";
@@ -2377,6 +2472,16 @@ string OCosRegister::toString()
 string OTanRegister::toString()
 {
     return "TANR " + getFirstArgument()->toString() + "," + getSecondArgument()->toString();
+}
+
+string OEngineDegtoRad::toString()
+{
+    return "DEGTORAD " + getFirstArgument()->toString() + "," + getSecondArgument()->toString();
+}
+
+string OEngineRadtoDeg::toString()
+{
+    return "RADTODEG " + getFirstArgument()->toString() + "," + getSecondArgument()->toString();
 }
 
 string Ostrlen::toString()
@@ -2784,6 +2889,10 @@ string OLoadBottleTypeRegister::toString()
 string OLoadBShopRegister::toString()
 {
     return "LOADBSHOPDATA " + getArgument()->toString();
+}
+string OLoadGenericDataR::toString()
+{
+    return "LOADGENERICDATA " + getArgument()->toString();
 }
 
 string ODMapDataGetNameRegister::toString()
@@ -3351,6 +3460,26 @@ string OIsValidLWpn::toString()
 string OIsValidEWpn::toString()
 {
     return "ISVALIDEWPN " + getArgument()->toString();
+}
+
+string OMakeAngularLwpn::toString()
+{
+    return "LWPNMAKEANGULAR " + getArgument()->toString();
+}
+
+string OMakeAngularEwpn::toString()
+{
+    return "EWPNMAKEANGULAR " + getArgument()->toString();
+}
+
+string OMakeDirectionalLwpn::toString()
+{
+    return "LWPNMAKEDIRECTIONAL " + getArgument()->toString();
+}
+
+string OMakeDirectionalEwpn::toString()
+{
+    return "EWPNMAKEDIRECTIONAL " + getArgument()->toString();
 }
 
 string OUseSpriteLWpn::toString()
@@ -4947,6 +5076,10 @@ string OSwitchCombo::toString()
 {
 	return "SWITCHCMB " + getFirstArgument()->toString() + "," + getSecondArgument()->toString();
 }
+string OKillPlayer::toString()
+{
+	return "KILLPLAYER " + getArgument()->toString();
+}
 
 string OScreenDoSpawn::toString()
 {
@@ -5451,6 +5584,10 @@ string OGETEWEAPONSCRIPT::toString()
 {
     return "GETEWEAPONSCRIPT " + getArgument()->toString();
 }
+string OGETGENERICSCRIPT::toString()
+{
+    return "GETGENERICSCRIPT " + getArgument()->toString();
+}
 string OGETHEROSCRIPT::toString()
 {
     return "GETHEROSCRIPT " + getArgument()->toString();
@@ -5709,4 +5846,9 @@ string OModuleGetIC::toString()
 
 
 //////////////////////////////////////////////////////////////////////////////////////
+
+string ORunGenericFrozenScript::toString()
+{
+	return "RUNGENFRZSCR " + getArgument()->toString();
+};
 

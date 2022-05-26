@@ -304,7 +304,11 @@ namespace ZScript
 	class ASTFloat : public AST
 	{
 	public:
-		enum Type {TYPE_DECIMAL, TYPE_BINARY, TYPE_HEX, TYPE_L_DECIMAL, TYPE_L_BINARY, TYPE_L_HEX, TYPE_OCTAL, TYPE_L_OCTAL};
+		enum Type {TYPE_DECIMAL, TYPE_BINARY, TYPE_HEX,
+			TYPE_L_DECIMAL, TYPE_L_BINARY, TYPE_L_HEX,
+			TYPE_OCTAL, TYPE_L_OCTAL,
+			TYPE_BINARY_2, TYPE_L_BINARY_2,
+			TYPE_OCTAL_2, TYPE_L_OCTAL_2};
 	
 		ASTFloat(char* value, Type type,
 		         LocationData const& location = LOC_NONE);
@@ -607,19 +611,25 @@ namespace ZScript
 	class ASTStmtBreak : public ASTStmt
 	{
 	public:
-		ASTStmtBreak(LocationData const& location = LOC_NONE);
+		ASTStmtBreak(ASTNumberLiteral* val = NULL, LocationData const& location = LOC_NONE);
 		ASTStmtBreak* clone() const {return new ASTStmtBreak(*this);}
 
 		void execute(ASTVisitor& visitor, void* param = NULL);
+		
+		size_t breakCount;
+		owning_ptr<ASTNumberLiteral> count;
 	};
 
 	class ASTStmtContinue : public ASTStmt
 	{
 	public:
-		ASTStmtContinue(LocationData const& location = LOC_NONE);
+		ASTStmtContinue(ASTNumberLiteral* val = NULL, LocationData const& location = LOC_NONE);
 		ASTStmtContinue* clone() const {return new ASTStmtContinue(*this);}
 
 		void execute(ASTVisitor& visitor, void* param = NULL);
+		
+		size_t contCount;
+		owning_ptr<ASTNumberLiteral> count;
 	};
 
 	class ASTStmtEmpty : public ASTStmt

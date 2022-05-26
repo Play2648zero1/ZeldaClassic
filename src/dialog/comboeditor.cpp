@@ -36,11 +36,10 @@ ComboEditorDialog::ComboEditorDialog(newcombo const& ref, int32_t index, bool cl
 	list_ctype(GUI::ListData::combotype(true)),
 	list_flag(GUI::ListData::mapflag(true)),
 	list_combscript(GUI::ListData::combodata_script()),
-	list_counters(GUI::ListData::counters()),
+	list_counters(GUI::ListData::counters(true)),
 	list_sprites(GUI::ListData::miscsprites()),
 	list_weaptype(GUI::ListData::lweaptypes()),
-	list_deftypes(GUI::ListData::deftypes()),
-	lasttype(-1), typehelp(""), flaghelp("")
+	list_deftypes(GUI::ListData::deftypes())
 {
 	if(clrd)
 	{
@@ -348,7 +347,7 @@ static const char *flag_help_string[mfMAX] =
 //}
 
 
-std::string getTypeHelpText(int32_t id)
+std::string getComboTypeHelpText(int32_t id)
 {
 	std::string typehelp;
 	switch(id)
@@ -418,6 +417,9 @@ std::string getTypeHelpText(int32_t id)
 		case cSWITCHHOOK:
 			typehelp = "When hit with a switch-hook, swaps position with the player (staying on the same layer).";
 			break;
+		case cBUTTONPROMPT:
+			typehelp = "Displays a button prompt based on the 'Btn:' triggerflags";
+			break;
 		default:
 			if(combotype_help_string[id] && combotype_help_string[id][0])
 				typehelp = combotype_help_string[id];
@@ -426,7 +428,7 @@ std::string getTypeHelpText(int32_t id)
 	}
 	return typehelp;
 }
-std::string getFlagHelpText(int32_t id)
+std::string getMapFlagHelpText(int32_t id)
 {
 	std::string flaghelp = "?? Missing documentation! ??";
 	if(flag_help_string[id] && flag_help_string[id][0])
@@ -531,21 +533,16 @@ std::string getFlagHelpText(int32_t id)
 }
 void ctype_help(int32_t id)
 {
-	InfoDialog(moduledata.combo_type_names[id],getTypeHelpText(id)).show();
+	InfoDialog(ZI.getComboTypeName(id),ZI.getComboTypeHelp(id)).show();
 }
 void cflag_help(int32_t id)
 {
-	InfoDialog(moduledata.combo_flag_names[id],getFlagHelpText(id)).show();
+	InfoDialog(ZI.getMapFlagName(id),ZI.getMapFlagHelp(id)).show();
 }
 //Load all the info for the combo type and checked flags
 void ComboEditorDialog::loadComboType()
 {
 	static std::string dirstr[] = {"up","down","left","right"};
-	if(lasttype != local_comboref.type) //Load type helpinfo
-	{
-		lasttype = local_comboref.type;
-		typehelp = getTypeHelpText(lasttype);
-	}
 	string l_flag[16];
 	string l_attribyte[8];
 	string l_attrishort[8];
@@ -564,7 +561,7 @@ void ComboEditorDialog::loadComboType()
 		l_attribute[q] = "Attributes["+to_string(q)+"]:";
 		h_attribute[q].clear();
 	}
-	switch(lasttype) //Label names
+	switch(local_comboref.type) //Label names
 	{
 		case cSTAIR: case cSTAIRB: case cSTAIRC: case cSTAIRD: case cSTAIRR:
 		case cSWIMWARP: case cSWIMWARPB: case cSWIMWARPC: case cSWIMWARPD:
@@ -688,7 +685,7 @@ void ComboEditorDialog::loadComboType()
 			l_flag[0] = "Stunned while moving";
 			h_flag[0] = "While the conveyor is moving the Player, they are 'stunned'.";
 			l_flag[1] = "Custom Speed";
-			h_flag[1] = "Uses a custom speed/direction via attributes. If disabled, moves at 2 pixels every 3 frames in the " + dirstr[lasttype-cCVUP] + "ward direction.";
+			h_flag[1] = "Uses a custom speed/direction via attributes. If disabled, moves at 2 pixels every 3 frames in the " + dirstr[local_comboref.type-cCVUP] + "ward direction.";
 			l_flag[2] = "Force Dir";
 			h_flag[2] = "Forces the Player to face in the conveyor's direction";
 			l_flag[3] = "Smart Corners";
@@ -860,8 +857,8 @@ void ComboEditorDialog::loadComboType()
 		}
 		case cLOCKBLOCK:
 		{
-			l_flag[0] = "Require Item";
-			h_flag[0] = "Require an item in your inventory to unlock the block";
+			l_flag[0] = "Use Item";
+			h_flag[0] = "Allow an item in your inventory to unlock the block";
 			if(FL(cflag1))
 			{
 				l_flag[4] = "Eat Item";
@@ -869,15 +866,15 @@ void ComboEditorDialog::loadComboType()
 				if(FL(cflag5))
 				{
 					l_attribyte[0] = "Consumed Item";
-					h_attribyte[0] = "The Item ID required to open the lock block. Consumed.";
+					h_attribyte[0] = "The Item ID to open the lock block. Consumed.";
 				}
 				else
 				{
 					l_attribyte[0] = "Held Item";
-					h_attribyte[0] = "The Item ID required to open the lock block. Not consumed.";
+					h_attribyte[0] = "The Item ID to open the lock block. Not consumed.";
 				}
-				l_flag[1] = "Only Item";
-				h_flag[1] = "Only the required item can open this block";
+				l_flag[1] = "Require Item";
+				h_flag[1] = "Only the required item can open this block (instead of ALSO allowing a key)";
 			}
 			else
 			{
@@ -901,16 +898,8 @@ void ComboEditorDialog::loadComboType()
 					h_flag[5] = "Consumes from counter even if you don't have enough";
 				}
 			}
-			
-			l_flag[2] = "Custom Unlock Sound";
-			h_flag[2] = "Play a custom sound when unlocked";
-			if(FL(cflag3))
-			{
-				l_attribyte[3] = "Unlock Sound:";
-				h_attribyte[3] = "The sound to play when unlocking the block";
-			}
-			break;
 		}
+		[[fallthrough]];
 		case cBOSSLOCKBLOCK:
 		{
 			l_flag[2] = "Custom Unlock Sound";
@@ -922,7 +911,65 @@ void ComboEditorDialog::loadComboType()
 			}
 			break;
 		}
-		case cCHEST: case cLOCKEDCHEST: case cBOSSCHEST:
+		case cLOCKEDCHEST:
+		{
+			l_flag[0] = "Use Item";
+			h_flag[0] = "Allow an item in your inventory to unlock the chest";
+			if(FL(cflag1))
+			{
+				l_flag[4] = "Eat Item";
+				h_flag[4] = "Consume the required item instead of simply requiring its presence";
+				if(FL(cflag5))
+				{
+					l_attribyte[0] = "Consumed Item";
+					h_attribyte[0] = "The Item ID to open the chest. Consumed.";
+				}
+				else
+				{
+					l_attribyte[0] = "Held Item";
+					h_attribyte[0] = "The Item ID to open the chest. Not consumed.";
+				}
+				l_flag[1] = "Require Item";
+				h_flag[1] = "Only the required item can open this chest (instead of ALSO allowing a key)";
+			}
+			else
+			{
+				l_attribute[0] = "Amount:";
+				if(FL(cflag4))
+					h_attribute[0] = "The amount of the arbitrary counter required to open this chest";
+				else
+					h_attribute[0] = "The amount of keys required to open this chest";
+			}
+			if(!(FL(cflag1)&&FL(cflag2)))
+			{
+				l_flag[3] = "Counter";
+				h_flag[3] = "If checked, uses an arbitrary counter instead of keys";
+				if(FL(cflag4))
+				{
+					l_attribyte[1] = "Counter:";
+					h_attribyte[1] = "The counter to use to open this block";
+					l_flag[7] = "No Drain";
+					h_flag[7] = "Requires the counter have the amount, but do not consume from it";
+					if(!FL(cflag8))
+					{
+						l_flag[5] = "Thief";
+						h_flag[5] = "Consumes from counter even if you don't have enough";
+					}
+				}
+			}
+		}
+		[[fallthrough]];
+		case cBOSSCHEST:
+		{
+			if(FL(cflag13)) //Prompt flag
+			{
+				l_attribute[2] = "Locked Prompt Combo";
+				h_attribute[2] = "Combo to display as a 'prompt', if you are not currently able to"
+					" open it. If 0, the normal prompt will be used instead.";
+			}
+		}
+		[[fallthrough]];
+		case cCHEST:
 		{
 			l_flag[8] = "Can't use from top";
 			h_flag[8] = "Cannot be activated standing to the top side if checked";
@@ -932,9 +979,25 @@ void ComboEditorDialog::loadComboType()
 			h_flag[10] = "Cannot be activated standing to the left side if checked";
 			l_flag[11] = "Can't use from right";
 			h_flag[11] = "Cannot be activated standing to the right side if checked";
+			l_flag[12] = "Display prompt combo";
+			h_flag[12] = "Displays a prompt combo when able to interact\n"
+				"Must set: Combo, Xoffset, Yoffset, CSet";
 			l_attribyte[2] = "Button:";
 			h_attribyte[2] = "Sum all the buttons you want to be usable:\n(A=1, B=2, L=4, R=8, Ex1=16, Ex2=32, Ex3=64, Ex4=128)\n"
 				"If no buttons are selected, walking into the chest will trigger it.";
+			l_attribyte[3] = "Open Sound:";
+			h_attribyte[3] = "The sound to play when opening the chest";
+			if(FL(cflag13))
+			{
+				l_attribute[1] = "Prompt Combo";
+				h_attribute[1] = "Combo to display as a 'prompt'";
+				l_attrishort[0] = "Prompt Xoffset";
+				h_attrishort[0] = "X offset from player's position for the prompt to display at";
+				l_attrishort[1] = "Prompt Yoffset";
+				h_attrishort[1] = "Y offset from player's position for the prompt to display at";
+				l_attribyte[4] = "Prompt CSet";
+				h_attribyte[4] = "CSet to draw the prompt in";
+			}
 			break;
 		}
 		case cSIGNPOST:
@@ -947,6 +1010,9 @@ void ComboEditorDialog::loadComboType()
 			h_flag[10] = "Cannot be activated standing to the left side if checked";
 			l_flag[11] = "Can't use from right";
 			h_flag[11] = "Cannot be activated standing to the right side if checked";
+			l_flag[12] = "Display prompt combo";
+			h_flag[12] = "Displays a prompt combo when able to interact\n"
+				"Must set: Combo, Xoffset, Yoffset, CSet";
 			l_attribyte[2] = "Button:";
 			h_attribyte[2] = "Sum all the buttons you want to be usable:\n(A=1, B=2, L=4, R=8, Ex1=16, Ex2=32, Ex3=64, Ex4=128)\n"
 				"If no buttons are selected, walking into the signpost will trigger it.";
@@ -955,6 +1021,29 @@ void ComboEditorDialog::loadComboType()
 				"-1: Use screen string\n"
 				"-2: Use screen catchall as string\n"
 				"-10 to -17: Use Screen->D[0] to [7] as string";
+			if(FL(cflag13))
+			{
+				l_attribute[1] = "Prompt Combo";
+				h_attribute[1] = "Combo to display as a 'prompt'";
+				l_attrishort[0] = "Prompt Xoffset";
+				h_attrishort[0] = "X offset from player's position for the prompt to display at";
+				l_attrishort[1] = "Prompt Yoffset";
+				h_attrishort[1] = "Y offset from player's position for the prompt to display at";
+				l_attribyte[4] = "Prompt CSet";
+				h_attribyte[4] = "CSet to draw the prompt in";
+			}
+			break;
+		}
+		case cBUTTONPROMPT:
+		{
+			l_attribute[0] = "Prompt Combo";
+			h_attribute[0] = "Combo to display as a 'prompt'";
+			l_attrishort[0] = "Prompt Xoffset";
+			h_attrishort[0] = "X offset from player's position for the prompt to display at";
+			l_attrishort[1] = "Prompt Yoffset";
+			h_attrishort[1] = "Y offset from player's position for the prompt to display at";
+			l_attribyte[0] = "Prompt CSet";
+			h_attribyte[0] = "CSet to draw the prompt in";
 			break;
 		}
 		case cTALLGRASSTOUCHY: case cTALLGRASSNEXT:
@@ -1375,6 +1464,8 @@ void ComboEditorDialog::loadComboType()
 				"\nIf unchecked, becomes the next combo when hit by a spotlight.";
 			l_flag[1] = "Invert";
 			h_flag[1] = "If checked, counts as triggered when light is NOT hitting it.";
+			l_flag[2] = "Blocks Light";
+			h_flag[2] = "Light that hits will trigger, but not pass, the target";
 			l_attribyte[4] = "Trigger Set:";
 			h_attribyte[4] = "0-32; if 0 will be triggered by any beams, otherwise only by matching beams";
 			break;
@@ -1439,10 +1530,6 @@ void ComboEditorDialog::loadComboType()
 	}
 	pendDraw();
 }
-void ComboEditorDialog::loadComboFlag()
-{
-	flaghelp = getFlagHelpText(local_comboref.flag);
-}
 void ComboEditorDialog::updateCSet()
 {
 	tswatch->setCSet(CSet);
@@ -1462,6 +1549,7 @@ void ComboEditorDialog::updateAnimation()
 	animFrame->setSpeed(local_comboref.speed);
 	animFrame->setTile(local_comboref.tile);
 	animFrame->setFlip(local_comboref.flip);
+	tswatch->setFlip(local_comboref.flip);
 }
 
 //{ Macros
@@ -1609,7 +1697,8 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 			info = "Edit combos, setting up their graphics, effects, and attributes.\n"
 				"Hotkeys:\n"
 				"-/+: Change CSet\n"
-				"H/V/R: Flip (Horz,Vert,Rotate)",
+				"H/V/R: Flip (Horz,Vert,Rotate)\n"
+				"T: Change tile",
 			onEnter = message::OK,
 			onClose = message::CANCEL,
 			shortcuts={
@@ -1620,6 +1709,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 				Equals=message::PLUSCS,
 				MinusPad=message::MINUSCS,
 				Minus=message::MINUSCS,
+				T=message::TILESEL,
 			},
 			Column(
 				Rows<3>(padding = 0_px,
@@ -1633,7 +1723,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 						width = 1.5_em, padding = 0_px, forceFitH = true,
 						text = "?", hAlign = 1.0, onPressFunc = [&]()
 						{
-							InfoDialog(moduledata.combo_type_names[local_comboref.type],typehelp).show();
+							ctype_help(local_comboref.type);
 						}
 					),
 					Label(text = "Inherent Flag:", hAlign = 1.0),
@@ -1646,7 +1736,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 						width = 1.5_em, padding = 0_px, forceFitH = true,
 						text = "?", hAlign = 1.0, onPressFunc = [&]()
 						{
-							InfoDialog(moduledata.combo_flag_names[local_comboref.flag],flaghelp).show();
+							cflag_help(local_comboref.flag);
 						}
 					)
 				),
@@ -1711,12 +1801,16 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 									colSpan = 2,
 									tile = local_comboref.tile,
 									cset = CSet,
+									flip = local_comboref.flip,
+									showFlip = true,
 									showvals = false,
-									onSelectFunc = [&](int32_t t, int32_t c)
+									onSelectFunc = [&](int32_t t, int32_t c, int32_t f)
 									{
 										local_comboref.tile = t;
 										local_comboref.o_tile = t;
+										local_comboref.flip = f;
 										CSet = (c&0xF)%12;
+										l_flip->setText(std::to_string(f));
 										updateAnimation();
 									}
 								),
@@ -2008,7 +2102,8 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 			info = "Edit combos, setting up their graphics, effects, and attributes.\n"
 				"Hotkeys:\n"
 				"-/+: Change CSet\n"
-				"H/V/R: Flip (Horz,Vert,Rotate)",
+				"H/V/R: Flip (Horz,Vert,Rotate)\n"
+				"T: Change tile",
 			onEnter = message::OK,
 			onClose = message::CANCEL,
 			shortcuts={
@@ -2019,6 +2114,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 				Equals=message::PLUSCS,
 				MinusPad=message::MINUSCS,
 				Minus=message::MINUSCS,
+				T=message::TILESEL,
 			},
 			Column(
 				Rows<3>(padding = 0_px,
@@ -2032,7 +2128,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 						width = 1.5_em, padding = 0_px, forceFitH = true,
 						text = "?", hAlign = 1.0, onPressFunc = [&]()
 						{
-							InfoDialog(moduledata.combo_type_names[local_comboref.type],typehelp).show();
+							ctype_help(local_comboref.type);
 						}
 					),
 					Label(text = "Inherent Flag:", hAlign = 1.0),
@@ -2045,7 +2141,7 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 						width = 1.5_em, padding = 0_px, forceFitH = true,
 						text = "?", hAlign = 1.0, onPressFunc = [&]()
 						{
-							InfoDialog(moduledata.combo_type_names[local_comboref.type],flaghelp).show();
+							cflag_help(local_comboref.flag);
 						}
 					)
 				),
@@ -2110,12 +2206,16 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 									colSpan = 2,
 									tile = local_comboref.tile,
 									cset = CSet,
+									flip = local_comboref.flip,
+									showFlip = true,
 									showvals = false,
-									onSelectFunc = [&](int32_t t, int32_t c)
+									onSelectFunc = [&](int32_t t, int32_t c, int32_t f)
 									{
 										local_comboref.tile = t;
 										local_comboref.o_tile = t;
+										local_comboref.flip = f;
 										CSet = (c&0xF)%12;
+										l_flip->setText(std::to_string(f));
 										updateAnimation();
 									}
 								),
@@ -2413,7 +2513,6 @@ std::shared_ptr<GUI::Widget> ComboEditorDialog::view()
 		);
 	}
 	loadComboType();
-	loadComboFlag();
 	return window;
 }
 
@@ -2430,7 +2529,6 @@ bool ComboEditorDialog::handleMessage(const GUI::DialogMessage<message>& msg)
 		case message::COMBOFLAG:
 		{
 			local_comboref.flag = int32_t(msg.argument);
-			loadComboFlag();
 			return false;
 		}
 		case message::HFLIP:
@@ -2494,6 +2592,12 @@ bool ComboEditorDialog::handleMessage(const GUI::DialogMessage<message>& msg)
 			CSet = (CSet+11)%12;
 			updateCSet();
 			return false;
+		}
+		case message::TILESEL:
+		{
+			if(cmb_tab1) break;
+			tswatch->click();
+			break;
 		}
 		case message::CLEAR:
 			AlertDialog("Are you sure?",

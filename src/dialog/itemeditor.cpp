@@ -5,23 +5,28 @@
 #include <gui/builder.h>
 
 void reset_itembuf(itemdata *item, int32_t id);
+char *ordinal(int32_t num);
 extern zquestheader header;
 extern bool saved;
 extern char *item_string[];
 extern itemdata *itemsbuf;
 extern zcmodule moduledata;
-static bool _reset_default;
-static itemdata reset_ref;
+static bool _reset_default, _reload_editor;
+static itemdata static_ref;
 static std::string reset_name;
 void call_item_editor(int32_t index)
 {
 	_reset_default = false;
 	ItemEditorDialog(index).show();
-	while(_reset_default)
+	while(_reset_default || _reload_editor)
 	{
-		_reset_default = false;
-		reset_itembuf(&reset_ref, index);
-		ItemEditorDialog(reset_ref, reset_name.c_str(), index).show();
+		if(_reset_default)
+		{
+			_reset_default = false;
+			reset_itembuf(&static_ref, index);
+		}
+		_reload_editor = false;
+		ItemEditorDialog(static_ref, reset_name.c_str(), index).show();
 	}
 }
 
@@ -128,6 +133,32 @@ void loadinfo(ItemNameInfo * inf, itemdata const& ref)
 				"Sum all of the values you want to apply. Weapons and lightbeams with their flags set will be reflected from in front of the player.\n"
 				"Weapons are only reflected if their value is in both 'Block Flags' and 'Reflect Flags'.");
 			_SET(actionsnd[0], "De/Reflection Sound:", "Plays when the shield successfully blocks or reflects a weapon");
+			
+			_SET(flag[0], "Protects Front", "The shield will protect the front side of the player");
+			_SET(flag[1], "Protects Back", "The shield will protect the back side of the player");
+			_SET(flag[2], "Protects Left", "The shield will protect the left side of the player");
+			_SET(flag[3], "Protects Right", "The shield will protect the right side of the player");
+			_SET(flag[8], "Active Use", "If enabled, the shield only protects the player (and provides its' LTM)"
+				" while it is equipped to a button that is being held.");
+			if(FLAG(9))
+			{
+				_SET(actionsnd[1], "Activation Sound:", "Plays when the shield button is pressed");
+				_SET(flag[4], "Inactive Front", "Protects the front when button is NOT held");
+				_SET(flag[5], "Inactive Back", "Protects the back when button is NOT held");
+				_SET(flag[6], "Inactive Left", "Protects the left when button is NOT held");
+				_SET(flag[7], "Inactive Right", "Protects the right when button is NOT held");
+				_SET(misc[5], "Inactive PTM", "Player Tile Modifier to use while shield is inactive");
+				_SET(flag[9], "Change Speed", "Change the player's walking speed while the shield is active");
+				_SET(flag[10], "Lock Direction", "When the shield is activated, lock the player's direction until"
+					" it is released.");
+				if(FLAG(10))
+				{
+					_SET(misc[6], "Speed Percentage", "A percentage multiplier for the player's movement speed."
+						" A negative value will give that amount *more* speed; i.e. '-100' is the same as '200'.");
+					_SET(misc[7], "Speed Bonus", "A step value (in 100ths of a pixel per frame) to be added to the"
+						" player's speed.");
+				}
+			}
 			break;
 		}
 		case itype_agony:
@@ -249,6 +280,33 @@ void loadinfo(ItemNameInfo * inf, itemdata const& ref)
 		case itype_clock:
 		{
 			_SET(misc[0], "Duration:", "How long the invincibility lasts, in frames. 0 = infinite.");
+			_SET(flag[0], "Active-Use", "If enabled, activates on use as an 'Equipment Item' instead"
+				" of on pickup.");
+			_SET(flag[1], "Can't trigger while active", "If enabled, will not activate while a clock"
+				" is already active.");
+			_SET(actionsnd[0], "Activation Sound", "SFX to play when the effect activates");
+			break;
+		}
+		case itype_killem:
+		{
+			_SET(flag[0], "Active-Use", "If enabled, activates on use as an 'Equipment Item' instead"
+				" of on pickup.");
+			_SET(actionsnd[0], "Activation Sound", "SFX to play when the effect activates");
+			break;
+		}
+		case itype_refill:
+		{
+			for(auto q = 0; q < 5; ++q)
+			{
+				std::string numstr = std::to_string(q + 1);
+				std::string ordstr = ordinal(q + 1);
+				_SET(misc[q], "Counter " + numstr, "The " + ordstr + " counter that will be refilled when activating the item."
+					"\nIf <0, acts as 'no counter'.");
+				_SET(misc[q+5], "Amount " + numstr, "How much the " + ordstr + " counter will be refilled by.");
+			}
+			_SET(flag[0], "Cures Sword Jinx", "When activated, cures sword jinx effects");
+			_SET(flag[1], "Gradual Refill", "Counters refill gradually instead of immediately.");
+			_SET(actionsnd[0], "Activation Sound", "SFX to play when the item is used");
 			break;
 		}
 		case itype_magicring:
@@ -462,6 +520,7 @@ void loadinfo(ItemNameInfo * inf, itemdata const& ref)
 		case itype_note:
 		{
 			_SET(misc[0], "String:", "The string to display when this item is used.");
+			_SET(actionsnd[0], "Opening Sound", "SFX to play when the note is opened");
 			break;
 		}
 		case itype_boots:
@@ -505,7 +564,8 @@ void loadinfo(ItemNameInfo * inf, itemdata const& ref)
 			inf->flag[0] = "Affects Damage Combos";
 			inf->flag[1] = "Percentage Multiplier";
 			if(FLAG(2))
-				inf->power = "Damage % Mult:";
+				_SET(power, "Damage % Mult:", "The percentage to multiply the damage by. A negative value"
+					" will deal that amount *more* damage; i.e. '-100' is the same as '200'.");
 			else
 				inf->power = "Damage Divisor:";
 			break;
@@ -784,13 +844,14 @@ void loadinfo(ItemNameInfo * inf, itemdata const& ref)
 ItemEditorDialog::ItemEditorDialog(itemdata const& ref, char const* str, int32_t index):
 	local_itemref(ref), itemname(str), index(index),
 	list_items(GUI::ListData::itemclass(true)),
-	list_counters(GUI::ListData::counters()),
+	list_counters(GUI::ListData::counters(true)),
 	list_sprites(GUI::ListData::miscsprites()),
 	list_itemdatscript(GUI::ListData::itemdata_script()),
 	list_itemsprscript(GUI::ListData::itemsprite_script()),
 	list_weaponscript(GUI::ListData::lweapon_script()),
 	list_weaptype(GUI::ListData::lweaptypes()),
-	list_deftypes(GUI::ListData::deftypes())
+	list_deftypes(GUI::ListData::deftypes()),
+	list_bottletypes(GUI::ListData::bottletype())
 {}
 
 ItemEditorDialog::ItemEditorDialog(int32_t index):
@@ -880,9 +941,29 @@ Row(vPadding = 0_px, \
 	) \
 )
 
+int32_t calcBottleTile(itemdata const& local_itemref, byte bottleVal)
+{
+	if(local_itemref.family != itype_bottle)
+		return local_itemref.tile;
+	int32_t o_tile = local_itemref.tile;
+	int32_t tile = o_tile + bottleVal * (zc_max(local_itemref.frames,1)
+		* ((local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEWIDTH)
+			? zc_max(local_itemref.tilew,1) : 1));
+	auto oldRow = o_tile/TILES_PER_ROW;
+	auto newRow = tile/TILES_PER_ROW;
+	if(oldRow != newRow)
+	{
+		tile += (newRow-oldRow) * TILES_PER_ROW
+			* ((local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEHEIGHT)
+				? zc_max(local_itemref.tileh,1)-1 : 0);
+	}
+	return tile;
+}
+
 //}
 
 static size_t itmtabs[4] = {0};
+static byte bottleType = 0;
 std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 {
 	using namespace GUI::Builder;
@@ -1039,92 +1120,138 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 								FLAG_CHECK(14,ITEM_FLAG15)
 							)
 						)),
-						TabRef(name = "Action", Column(
-							Rows<2>(framed = true, frameText = "Use Cost",
-								padding = DEFAULT_PADDING*2,
-								margins = DEFAULT_PADDING,
-								TextField(
-									val = local_itemref.magic,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.magic = val;
-									}
+						TabRef(name = "Action", Row(
+							Column(
+								Rows<2>(framed = true, frameText = "Use Cost",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									TextField(
+										val = local_itemref.cost_amount[0],
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, low = -32768, high = 32767,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.cost_amount[0] = val;
+										}
+									),
+									DropDownList(
+										data = list_counters,
+										selectedValue = local_itemref.cost_counter[0],
+										onSelectFunc = [&](int32_t val)
+										{
+											local_itemref.cost_counter[0] = val;
+										}
+									),
+									Label(text = "Timer:", textAlign = 2, forceFitW = true),
+									TextField(
+										val = local_itemref.magiccosttimer[0],
+										type = GUI::TextField::type::INT_DECIMAL,
+										minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.magiccosttimer[0] = val;
+										}
+									),
+									DummyWidget(),
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_VALIDATEONLY),
+										text = "Only Validate Cost",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY,state);
+										}
+									)
 								),
-								DropDownList(
-									data = list_counters,
-									selectedValue = local_itemref.cost_counter,
-									onSelectFunc = [&](int32_t val)
-									{
-										local_itemref.cost_counter = val;
-									}
-								),
-								Label(text = "Timer:", textAlign = 2, forceFitW = true),
-								TextField(
-									val = local_itemref.magiccosttimer,
-									type = GUI::TextField::type::INT_DECIMAL,
-									minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.magiccosttimer = val;
-									}
+								Rows<2>(framed = true, frameText = "Use Cost 2",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									TextField(
+										val = local_itemref.cost_amount[1],
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, low = -32768, high = 32767,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.cost_amount[1] = val;
+										}
+									),
+									DropDownList(
+										data = list_counters,
+										selectedValue = local_itemref.cost_counter[1],
+										onSelectFunc = [&](int32_t val)
+										{
+											local_itemref.cost_counter[1] = val;
+										}
+									),
+									Label(text = "Timer:", textAlign = 2, forceFitW = true),
+									TextField(
+										val = local_itemref.magiccosttimer[1],
+										type = GUI::TextField::type::INT_DECIMAL,
+										minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.magiccosttimer[1] = val;
+										}
+									),
+									DummyWidget(),
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_VALIDATEONLY2),
+										text = "Only Validate Cost 2",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY2,state);
+										}
+									)
 								)
 							),
-							Rows<3>(framed = true, frameText = "SFX",
-								padding = DEFAULT_PADDING*2,
-								margins = DEFAULT_PADDING,
-								l_sfx[0] = Label(textAlign = 2, width = ACTION_LAB_WID),
-								ib_sfx[0] = Button(forceFitH = true, text = "?",
-									disabled = true,
-									onPressFunc = [&]()
-									{
-										InfoDialog("SFX Info",h_sfx[0]).show();
-									}),
-								TextField(
-									val = local_itemref.usesound,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.usesound = val;
-									}
+							Column(
+								Rows<3>(framed = true, frameText = "SFX",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									l_sfx[0] = Label(textAlign = 2, width = ACTION_LAB_WID),
+									ib_sfx[0] = Button(forceFitH = true, text = "?",
+										disabled = true,
+										onPressFunc = [&]()
+										{
+											InfoDialog("SFX Info",h_sfx[0]).show();
+										}),
+									TextField(
+										val = local_itemref.usesound,
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.usesound = val;
+										}
+									),
+									l_sfx[1] = Label(textAlign = 2, width = ACTION_LAB_WID),
+									ib_sfx[1] = Button(forceFitH = true, text = "?",
+										disabled = true,
+										onPressFunc = [&]()
+										{
+											InfoDialog("SFX Info",h_sfx[1]).show();
+										}),
+									TextField(
+										val = local_itemref.usesound2,
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.usesound2 = val;
+										}
+									)
 								),
-								l_sfx[1] = Label(textAlign = 2, width = ACTION_LAB_WID),
-								ib_sfx[1] = Button(forceFitH = true, text = "?",
-									disabled = true,
-									onPressFunc = [&]()
-									{
-										InfoDialog("SFX Info",h_sfx[1]).show();
-									}),
-								TextField(
-									val = local_itemref.usesound2,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.usesound2 = val;
-									}
-								)
-							),
-							Rows<2>(
-								Checkbox(
-									hAlign = 0.0,
-									checked = (local_itemref.flags & ITEM_DOWNGRADE),
-									text = "Remove Item When Used",
-									onToggleFunc = [&](bool state)
-									{
-										SETFLAG(local_itemref.flags,ITEM_DOWNGRADE,state);
-									}
-								),
-								Checkbox(
-									hAlign = 0.0,
-									checked = (local_itemref.flags & ITEM_VALIDATEONLY),
-									text = "Only Validate Cost",
-									onToggleFunc = [&](bool state)
-									{
-										SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY,state);
-									}
+								Rows<2>(
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_DOWNGRADE),
+										text = "Remove Item When Used",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_DOWNGRADE,state);
+										}
+									)
 								)
 							)
 						)),
@@ -1627,32 +1754,47 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 								SelTileSwatch(
 									tile = local_itemref.tile,
 									cset = (local_itemref.csets & 0x0F),
-									onSelectFunc = [&](int32_t t, int32_t c)
+									onSelectFunc = [&](int32_t t, int32_t c, int32_t)
 									{
 										local_itemref.tile = t;
 										local_itemref.csets &= 0xF0;
 										local_itemref.csets |= c&0x0F;
-										animFrame->setTile(t);
+										animFrame->setTile(calcBottleTile(local_itemref, bottleType));
 										animFrame->setCSet(c);
 									}
 								),
 								Checkbox(
 									hAlign = 0.0,
-									checked = (local_itemref.misc & 1),
+									checked = (local_itemref.misc_flags & 1),
 									text = "Flash",
 									onToggleFunc = [&](bool state)
 									{
-										SETFLAG(local_itemref.misc,1,state);
+										SETFLAG(local_itemref.misc_flags,1,state);
 									}
 								),
 								Checkbox(
 									hAlign = 0.0,
-									checked = (local_itemref.misc & 2),
+									checked = (local_itemref.misc_flags & 2),
 									text = "2-Hand",
 									onToggleFunc = [&](bool state)
 									{
-										SETFLAG(local_itemref.misc,2,state);
+										SETFLAG(local_itemref.misc_flags,2,state);
 									}
+								)
+							),
+							Column(
+								animSwitcher = Switcher(
+									DummyWidget(),
+									DropDownList(data = list_bottletypes,
+										fitParent = true, padding = 0_px,
+										selectedValue = bottleType,
+										onSelectFunc = [&](int32_t val)
+										{
+											bottleType = (byte)val;
+											animFrame->setTile(calcBottleTile(local_itemref, bottleType));
+											pendDraw();
+										}
+									)
 								),
 								animFrame = TileFrame(
 									hAlign = 0.0,
@@ -1660,8 +1802,14 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 									cset = (local_itemref.csets & 0xF),
 									frames = local_itemref.frames,
 									speed = local_itemref.speed,
-									delay = local_itemref.delay
-								)
+									delay = local_itemref.delay,
+									skipx = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEWIDTH)
+										? local_itemref.tilew-1 : 0,
+									skipy = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEHEIGHT)
+										? local_itemref.tileh-1 : 0,
+									do_sized = true
+								),
+								Button(text = "Refresh Preview", onClick = message::RELOAD)
 							)
 						)),
 						TabRef(name = "Sprites", Columns<5>(
@@ -1685,6 +1833,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										val = local_itemref.tilew,
 										type = GUI::TextField::type::INT_DECIMAL,
 										width = ACTION_FIELD_WID, high = 32,
+										onValueChanged = message::GFXSIZE,
 										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
 										{
 											local_itemref.tilew = val;
@@ -1694,6 +1843,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										hAlign = 0.0,
 										checked = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEWIDTH),
 										text = "Enabled",
+										onToggle = message::GFXSIZE,
 										onToggleFunc = [&](bool state)
 										{
 											SETFLAG(local_itemref.overrideFLAGS,itemdataOVERRIDE_TILEWIDTH,state);
@@ -1706,6 +1856,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										val = local_itemref.tileh,
 										type = GUI::TextField::type::INT_DECIMAL,
 										width = ACTION_FIELD_WID, high = 32,
+										onValueChanged = message::GFXSIZE,
 										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
 										{
 											local_itemref.tileh = val;
@@ -1715,6 +1866,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										hAlign = 0.0,
 										checked = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEHEIGHT),
 										text = "Enabled",
+										onToggle = message::GFXSIZE,
 										onToggleFunc = [&](bool state)
 										{
 											SETFLAG(local_itemref.overrideFLAGS,itemdataOVERRIDE_TILEHEIGHT,state);
@@ -1880,6 +2032,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										val = local_itemref.weap_tilew,
 										type = GUI::TextField::type::INT_DECIMAL,
 										width = ACTION_FIELD_WID, high = 32,
+										onValueChanged = message::GFXSIZE,
 										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
 										{
 											local_itemref.weap_tilew = val;
@@ -1889,6 +2042,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										hAlign = 0.0,
 										checked = (local_itemref.weapoverrideFLAGS & itemdataOVERRIDE_TILEWIDTH),
 										text = "Enabled",
+										onToggle = message::GFXSIZE,
 										onToggleFunc = [&](bool state)
 										{
 											SETFLAG(local_itemref.weapoverrideFLAGS,itemdataOVERRIDE_TILEWIDTH,state);
@@ -1901,6 +2055,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										val = local_itemref.weap_tileh,
 										type = GUI::TextField::type::INT_DECIMAL,
 										width = ACTION_FIELD_WID, high = 32,
+										onValueChanged = message::GFXSIZE,
 										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
 										{
 											local_itemref.weap_tileh = val;
@@ -1910,6 +2065,7 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 										hAlign = 0.0,
 										checked = (local_itemref.weapoverrideFLAGS & itemdataOVERRIDE_TILEHEIGHT),
 										text = "Enabled",
+										onToggle = message::GFXSIZE,
 										onToggleFunc = [&](bool state)
 										{
 											SETFLAG(local_itemref.weapoverrideFLAGS,itemdataOVERRIDE_TILEHEIGHT,state);
@@ -2296,92 +2452,138 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 								)
 							)
 						)),
-						TabRef(name = "Action", Column(
-							Rows<2>(framed = true, frameText = "Use Cost",
-								padding = DEFAULT_PADDING*2,
-								margins = DEFAULT_PADDING,
-								TextField(
-									val = local_itemref.magic,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.magic = val;
-									}
+						TabRef(name = "Action", Row(
+							Column(
+								Rows<2>(framed = true, frameText = "Use Cost",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									TextField(
+										val = local_itemref.cost_amount[0],
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, low = -32768, high = 32767,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.cost_amount[0] = val;
+										}
+									),
+									DropDownList(
+										data = list_counters,
+										selectedValue = local_itemref.cost_counter[0],
+										onSelectFunc = [&](int32_t val)
+										{
+											local_itemref.cost_counter[0] = val;
+										}
+									),
+									Label(text = "Timer:", textAlign = 2, forceFitW = true),
+									TextField(
+										val = local_itemref.magiccosttimer[0],
+										type = GUI::TextField::type::INT_DECIMAL,
+										minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.magiccosttimer[0] = val;
+										}
+									),
+									DummyWidget(),
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_VALIDATEONLY),
+										text = "Only Validate Cost",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY,state);
+										}
+									)
 								),
-								DropDownList(
-									data = list_counters,
-									selectedValue = local_itemref.cost_counter,
-									onSelectFunc = [&](int32_t val)
-									{
-										local_itemref.cost_counter = val;
-									}
-								),
-								Label(text = "Timer:", textAlign = 2, forceFitW = true),
-								TextField(
-									val = local_itemref.magiccosttimer,
-									type = GUI::TextField::type::INT_DECIMAL,
-									minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.magiccosttimer = val;
-									}
+								Rows<2>(framed = true, frameText = "Use Cost 2",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									TextField(
+										val = local_itemref.cost_amount[1],
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, low = -32768, high = 32767,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.cost_amount[1] = val;
+										}
+									),
+									DropDownList(
+										data = list_counters,
+										selectedValue = local_itemref.cost_counter[1],
+										onSelectFunc = [&](int32_t val)
+										{
+											local_itemref.cost_counter[1] = val;
+										}
+									),
+									Label(text = "Timer:", textAlign = 2, forceFitW = true),
+									TextField(
+										val = local_itemref.magiccosttimer[1],
+										type = GUI::TextField::type::INT_DECIMAL,
+										minwidth = ACTION_FIELD_WID, fitParent = true, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.magiccosttimer[1] = val;
+										}
+									),
+									DummyWidget(),
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_VALIDATEONLY2),
+										text = "Only Validate Cost 2",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY2,state);
+										}
+									)
 								)
 							),
-							Rows<3>(framed = true, frameText = "SFX",
-								padding = DEFAULT_PADDING*2,
-								margins = DEFAULT_PADDING,
-								l_sfx[0] = Label(textAlign = 2, width = ACTION_LAB_WID),
-								ib_sfx[0] = Button(forceFitH = true, text = "?",
-									disabled = true,
-									onPressFunc = [&]()
-									{
-										InfoDialog("SFX Info",h_sfx[0]).show();
-									}),
-								TextField(
-									val = local_itemref.usesound,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.usesound = val;
-									}
+							Column(
+								Rows<3>(framed = true, frameText = "SFX",
+									padding = DEFAULT_PADDING*2,
+									margins = DEFAULT_PADDING,
+									l_sfx[0] = Label(textAlign = 2, width = ACTION_LAB_WID),
+									ib_sfx[0] = Button(forceFitH = true, text = "?",
+										disabled = true,
+										onPressFunc = [&]()
+										{
+											InfoDialog("SFX Info",h_sfx[0]).show();
+										}),
+									TextField(
+										val = local_itemref.usesound,
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.usesound = val;
+										}
+									),
+									l_sfx[1] = Label(textAlign = 2, width = ACTION_LAB_WID),
+									ib_sfx[1] = Button(forceFitH = true, text = "?",
+										disabled = true,
+										onPressFunc = [&]()
+										{
+											InfoDialog("SFX Info",h_sfx[1]).show();
+										}),
+									TextField(
+										val = local_itemref.usesound2,
+										type = GUI::TextField::type::INT_DECIMAL,
+										width = ACTION_FIELD_WID, high = 255,
+										onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
+										{
+											local_itemref.usesound2 = val;
+										}
+									)
 								),
-								l_sfx[1] = Label(textAlign = 2, width = ACTION_LAB_WID),
-								ib_sfx[1] = Button(forceFitH = true, text = "?",
-									disabled = true,
-									onPressFunc = [&]()
-									{
-										InfoDialog("SFX Info",h_sfx[1]).show();
-									}),
-								TextField(
-									val = local_itemref.usesound2,
-									type = GUI::TextField::type::INT_DECIMAL,
-									width = ACTION_FIELD_WID, high = 255,
-									onValChangedFunc = [&](GUI::TextField::type,std::string_view,int32_t val)
-									{
-										local_itemref.usesound2 = val;
-									}
-								)
-							),
-							Rows<2>(
-								Checkbox(
-									hAlign = 0.0,
-									checked = (local_itemref.flags & ITEM_DOWNGRADE),
-									text = "Remove Item When Used",
-									onToggleFunc = [&](bool state)
-									{
-										SETFLAG(local_itemref.flags,ITEM_DOWNGRADE,state);
-									}
-								),
-								Checkbox(
-									hAlign = 0.0,
-									checked = (local_itemref.flags & ITEM_VALIDATEONLY),
-									text = "Only Validate Cost",
-									onToggleFunc = [&](bool state)
-									{
-										SETFLAG(local_itemref.flags,ITEM_VALIDATEONLY,state);
-									}
+								Rows<2>(
+									Checkbox(
+										hAlign = 0.0,
+										checked = (local_itemref.flags & ITEM_DOWNGRADE),
+										text = "Remove Item When Used",
+										onToggleFunc = [&](bool state)
+										{
+											SETFLAG(local_itemref.flags,ITEM_DOWNGRADE,state);
+										}
+									)
 								)
 							)
 						)),
@@ -2874,32 +3076,47 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 								SelTileSwatch(
 									tile = local_itemref.tile,
 									cset = (local_itemref.csets & 0x0F),
-									onSelectFunc = [&](int32_t t, int32_t c)
+									onSelectFunc = [&](int32_t t, int32_t c, int32_t)
 									{
 										local_itemref.tile = t;
 										local_itemref.csets &= 0xF0;
 										local_itemref.csets |= c&0x0F;
-										animFrame->setTile(t);
+										animFrame->setTile(calcBottleTile(local_itemref, bottleType));
 										animFrame->setCSet(c);
 									}
 								),
 								Checkbox(
 									hAlign = 0.0,
-									checked = (local_itemref.misc & 1),
+									checked = (local_itemref.misc_flags & 1),
 									text = "Flash",
 									onToggleFunc = [&](bool state)
 									{
-										SETFLAG(local_itemref.misc,1,state);
+										SETFLAG(local_itemref.misc_flags,1,state);
 									}
 								),
 								Checkbox(
 									hAlign = 0.0,
-									checked = (local_itemref.misc & 2),
+									checked = (local_itemref.misc_flags & 2),
 									text = "2-Hand",
 									onToggleFunc = [&](bool state)
 									{
-										SETFLAG(local_itemref.misc,2,state);
+										SETFLAG(local_itemref.misc_flags,2,state);
 									}
+								)
+							),
+							Column(
+								animSwitcher = Switcher(
+									DummyWidget(),
+									DropDownList(data = list_bottletypes,
+										fitParent = true, padding = 0_px,
+										selectedValue = bottleType,
+										onSelectFunc = [&](int32_t val)
+										{
+											bottleType = (byte)val;
+											animFrame->setTile(calcBottleTile(local_itemref, bottleType));
+											pendDraw();
+										}
+									)
 								),
 								animFrame = TileFrame(
 									hAlign = 0.0,
@@ -2907,8 +3124,14 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 									cset = (local_itemref.csets & 0xF),
 									frames = local_itemref.frames,
 									speed = local_itemref.speed,
-									delay = local_itemref.delay
-								)
+									delay = local_itemref.delay,
+									skipx = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEWIDTH)
+										? local_itemref.tilew-1 : 0,
+									skipy = (local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEHEIGHT)
+										? local_itemref.tileh-1 : 0,
+									do_sized = true
+								),
+								Button(text = "Refresh Preview", onClick = message::RELOAD)
 							)
 						)),
 						TabRef(name = "Sprites", 
@@ -3375,6 +3598,9 @@ std::shared_ptr<GUI::Widget> ItemEditorDialog::view()
 
 void ItemEditorDialog::loadItemClass()
 {
+	animFrame->setTile(calcBottleTile(local_itemref, bottleType));
+	animSwitcher->switchTo(local_itemref.family == itype_bottle ? 1 : 0);
+	
 	ItemNameInfo inf;
 	loadinfo(&inf, local_itemref);
 	
@@ -3440,7 +3666,16 @@ bool ItemEditorDialog::handleMessage(const GUI::DialogMessage<message>& msg)
 			loadItemClass();
 			return false;
 		}
-
+		
+		case message::GFXSIZE:
+		{
+			animFrame->setSkipX((local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEWIDTH)
+				? local_itemref.tilew-1 : 0);
+			animFrame->setSkipY((local_itemref.overrideFLAGS & itemdataOVERRIDE_TILEHEIGHT)
+				? local_itemref.tileh-1 : 0);
+			return false;
+		}
+		
 		case message::DEFAULT:
 		{
 			bool cancel = false;
@@ -3453,7 +3688,15 @@ bool ItemEditorDialog::handleMessage(const GUI::DialogMessage<message>& msg)
 				}).show();
 			if(cancel) return false;
 			_reset_default = true;
-			reset_ref = local_itemref;
+			static_ref = local_itemref;
+			reset_name = itemname;
+			return true;
+		}
+		
+		case message::RELOAD:
+		{
+			_reload_editor = true;
+			static_ref = local_itemref;
 			reset_name = itemname;
 			return true;
 		}

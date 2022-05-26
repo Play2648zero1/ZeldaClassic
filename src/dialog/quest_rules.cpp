@@ -159,6 +159,9 @@ static const GUI::ListData comboRulesList
 	{ "Player Drowns in Walkable Water", qr_DROWN,
 		"When the Player steps in water without powerful enough flippers"
 		" to swim in it, they will drown." },
+	{ "Classic Respawn Points", qr_OLD_RESPAWN_POINTS,
+		"Respawn points on drowning/pitfall will always be the screen entry point with this checked."
+		"\nIf unchecked, the respawn will be the last safe place the player has stood, including across screens." },
 	{ "Smart Screen Scrolling", qr_SMARTSCREENSCROLL, 
 		"Before scrolling the screen, checks the destination screen"
 		" and position to see if it's solid. If so, scrolling is cancelled."
@@ -367,6 +370,9 @@ static const GUI::ListData comboRulesList
 	{ "More Sensitive Dock Combos", qr_BETTER_RAFT_2, 
 		"If enabled, the collision for dock combos will only check the bottom part of the player's"
 		" hitbox, as opposed to the bottom and top parts of their hitbox."},
+	{ "Docks use Raft Item's sound", qr_RAFT_SOUND,
+		"The raft will use the sound specified in UseSound when starting rafting,"
+		" as opposed to the screen's secret sound."}
 };
 
 static const GUI::ListData compatRulesList
@@ -579,10 +585,9 @@ static const GUI::ListData compatRulesList
 		"Changes the timing of itemdata scripts. If this is disabled, they run"
 		" immediately before the Player's internal code. If this is enabled,"
 		" it will run immediately after."},
-	{ "No fairy spawn limit", qr_FIXED_FAIRY_LIMIT, 
-		"If this rule is enabled, there is no longer a single spawn limit on the number"
-		" of fairies onscreen. This lets enemies and other things drop fairies while"
-		" there is a fairy onscreen." },
+	{ "Old fairy spawn limit", qr_OLD_FAIRY_LIMIT, 
+		"If this rule is enabled, there is a limit of one fairy onscreen that enemies"
+		" and combos can drop."},
 	{ "Arrows clip farther into dungeon walls", qr_ARROWCLIP, 
 		"If this rule is enabled, arrows will still check for secrets even while they"
 		" are 'blinking out'. This lets them hit triggers on top of blocking combos and"
@@ -689,9 +694,6 @@ static const GUI::ListData compatRulesList
 		" Enabling this will recreate this behavior."},
 	{ "Candle use limit is shared", qr_CANDLES_SHARED_LIMIT,
 		"Candle limited uses per screen is shared between candles" },
-	{ "Old Respawn Points", qr_OLD_RESPAWN_POINTS,
-		"Respawn points on drowning/pitfall will always be the screen entry point with this checked."
-		"\nIf unchecked, the respawn will be the last safe place the player has stood, including across screens." },
 	{ "Enemies with 'None' animation don't obey OriginalTile changes", qr_ANONE_NOANIM,
 		"Enemies with the 'None' animation style will not reset their displayed tile to"
 		" their 'OriginalTile' every frame if this is enabled." },
@@ -759,7 +761,20 @@ static const GUI::ListData compatRulesList
 		"If enabled, 'Keep Lower Level Items' acts as always checked for all items." },
 	{ "Old Half Magic", qr_OLD_HALF_MAGIC,
 		"If enabled, half magic rooms always set the multiplier to 1,"
-		" instead of halving its' previous value." }
+		" instead of halving its' previous value." },
+	{ "Engine warps restart DMap Script", qr_WARPS_RESTART_DMAPSCRIPT,
+		"If enabled, engine warps will restart or clear the currently running dmap script, even if you warp to the same dmap you were just on." },
+	{ "DMap 0 hardcoded continue", qr_DMAP_0_CONTINUE_BUG,
+		"If enabled, entering DMap 0 will set your continue point to it's continue screen, even if it shouldn't." },
+	{ "Old Scripted Knockback", qr_OLD_SCRIPTED_KNOCKBACK,
+		"If enabled, npc->Knockback will use older logic, which had a tendency to clip enemies into walls." },
+	{ "Old Keese Z Axis Behavior", qr_OLD_KEESE_Z_AXIS,
+		"If enabled, Keese will barely change their z value unless over 128 pixels away from Link. If disabled,"
+		" they will use the Z axis up to 40 pixels away and go higher up than before, but still be hittable when close to Link."},
+	{ "No Pols Voice/Vire Shadows with Z axis", qr_POLVIRE_NO_SHADOW,
+		"If enabled, Pols Voice and Vires won't have shadows when jumping in the Z axis."},
+	{ "Old Subscreen Selector", qr_SUBSCR_OLD_SELECTOR,
+		"If disabled, the subscreen selector will stretch to fit the item it is selecting." }
 };
 
 static const GUI::ListData enemiesRulesList
@@ -1101,7 +1116,10 @@ static const GUI::ListData miscRulesList
 		" the boundary between screens *during scrolling*." },
 	{ "Restarting Level always goes to DMap continue point", qr_LEVEL_RESTART_CONT_POINT,
 		"Effects like Wallmasters and Farore's Wind will go back to the DMap's"
-		" continue point, rather than the last entrance point." }
+		" continue point, rather than the last entrance point." },
+	{ "Flip 'don't restart dmap script' script warp flag", qr_SCRIPT_WARPS_DMAP_SCRIPT_TOGGLE,
+		"If enabled, the warp flag to disable restarting the dmap script when warping to the same dmap will be flipped"
+		" so that having the flag on will restart the dmap script and having it off won't restart when warping to the same dmap."}
 };
 
 static const GUI::ListData nesfixesRulesList
@@ -1323,6 +1341,7 @@ static const GUI::ListData weaponsRulesList
 };
 
 //}
+int32_t onStrFix(); //zquest.cpp
 void applyRuleTemplate(int32_t ruleTemplate)
 {
 	switch(ruleTemplate)
@@ -1331,8 +1350,16 @@ void applyRuleTemplate(int32_t ruleTemplate)
 		{
 			for(size_t q = 0; q < compatRulesList.size(); ++q)
 			{
-				set_bit(quest_rules, compatRulesList.getValue(q), 0);
+				auto rule = compatRulesList.getValue(q);
+				switch(rule)
+				{
+					case qr_OLD_STRING_EDITOR_MARGINS:
+					case qr_STRING_FRAME_OLD_WIDTH_HEIGHT:
+						continue; //Don't auto-unset, use 'onStrFix()' instead
+				}
+				set_bit(quest_rules, rule, 0);
 			}
+			onStrFix();
 			break;
 		}
 		case ruletemplateZSCompat:

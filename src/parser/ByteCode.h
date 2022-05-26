@@ -1341,8 +1341,60 @@
 #define SHOWNMSG                1258
 #define COMBODTRIGGERFLAGS2     1259
 #define COMBODTRIGGERBUTTON     1260
+#define REFGENERICDATA          1261
+#define GENDATARUNNING          1262
+#define GENDATASIZE             1263
+#define GENDATAEXITSTATE        1264
+#define GENDATADATA             1265
+#define GENDATAINITD            1266
+#define GENDATARELOADSTATE      1267
+#define COMBODCSET2FLAGS        1268
+#define HEROIMMORTAL            1269
+#define NPCCANFLICKER           1270
+#define NPCDROWNCLK             1271
+#define NPCDROWNCMB             1272
+#define ITEMDROWNCLK		1273
+#define ITEMDROWNCMB		1274
+#define LWPNDROWNCLK		1275
+#define LWPNDROWNCMB		1276
+#define EWPNDROWNCLK		1277
+#define EWPNDROWNCMB		1278
+#define HERODROWNCLK		1279
+#define HERODROWNCMB		1280
+#define NPCFAKEZ		1281
+#define ITEMFAKEZ		1282
+#define LWPNFAKEZ		1283
+#define EWPNFAKEZ		1284
+#define HEROFAKEZ		1285
+#define NPCFAKEJUMP		1286
+#define ITEMFAKEJUMP		1287
+#define LWPNFAKEJUMP		1288
+#define EWPNFAKEJUMP		1289
+#define HEROFAKEJUMP		1290
+#define HEROSHADOWXOFS		1291
+#define HEROSHADOWYOFS		1292
+#define NPCSHADOWXOFS		1293
+#define NPCSHADOWYOFS		1294
+#define ITEMSHADOWXOFS		1295
+#define ITEMSHADOWYOFS		1296
+#define LWPNSHADOWXOFS		1297
+#define LWPNSHADOWYOFS		1298
+#define EWPNSHADOWXOFS		1299
+#define EWPNSHADOWYOFS		1300
+#define LWPNDEGANGLE            1301
+#define EWPNDEGANGLE            1302
+#define LWPNVX                  1303
+#define LWPNVY                  1304
+#define EWPNVX                  1305
+#define EWPNVY                  1306
+#define LWPNAUTOROTATE          1307
+#define EWPNAUTOROTATE          1308
+#define IDATACOSTCOUNTER2       1309
+#define IDATAMAGICTIMER2        1310
+#define IDATACOST2              1311
+#define IDATAVALIDATE2          1312
 
-#define LAST_BYTECODE           1261
+#define LAST_BYTECODE           1313
 
 //} END OF BYTECODE
 
@@ -1846,6 +1898,17 @@ namespace ZScript
 		Opcode *clone()
 		{
 			return new OWaitdraw();
+		}
+	};
+	
+	class OWaitTo : public BinaryOpcode
+	{
+	public:
+		OWaitTo(Argument *A, Argument *B) : BinaryOpcode(A,B) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OWaitTo(a->clone(),b->clone());
 		}
 	};
 	
@@ -2435,6 +2498,28 @@ namespace ZScript
 		Opcode *clone()
 		{
 			return new OTanRegister(a->clone(), b->clone());
+		}
+	};
+	
+	class OEngineDegtoRad : public BinaryOpcode
+	{
+	public:
+		OEngineDegtoRad(Argument *A, Argument *B) : BinaryOpcode(A,B) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OEngineDegtoRad(a->clone(), b->clone());
+		}
+	};
+	
+	class OEngineRadtoDeg : public BinaryOpcode
+	{
+	public:
+		OEngineRadtoDeg(Argument *A, Argument *B) : BinaryOpcode(A,B) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OEngineRadtoDeg(a->clone(), b->clone());
 		}
 	};
 	
@@ -3093,6 +3178,17 @@ namespace ZScript
 		Opcode *clone()
 		{
 			return new OLoadBShopRegister(a->clone());
+		}
+	};
+
+	class OLoadGenericDataR : public UnaryOpcode
+	{
+	public:
+		OLoadGenericDataR(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OLoadGenericDataR(a->clone());
 		}
 	};
 
@@ -3931,6 +4027,50 @@ namespace ZScript
 		Opcode *clone()
 		{
 			return new OIsValidEWpn(a->clone());
+		}
+	};
+	
+	class OMakeAngularLwpn : public UnaryOpcode
+	{
+	public:
+		OMakeAngularLwpn(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OMakeAngularLwpn(a->clone());
+		}
+	};
+	
+	class OMakeAngularEwpn : public UnaryOpcode
+	{
+	public:
+		OMakeAngularEwpn(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OMakeAngularEwpn(a->clone());
+		}
+	};
+	
+	class OMakeDirectionalLwpn : public UnaryOpcode
+	{
+	public:
+		OMakeDirectionalLwpn(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OMakeDirectionalLwpn(a->clone());
+		}
+	};
+	
+	class OMakeDirectionalEwpn : public UnaryOpcode
+	{
+	public:
+		OMakeDirectionalEwpn(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OMakeDirectionalEwpn(a->clone());
 		}
 	};
 
@@ -8181,6 +8321,16 @@ namespace ZScript
 			return new OSwitchCombo(a->clone(),b->clone());
 		}
 	};
+	class OKillPlayer : public UnaryOpcode
+	{
+	public:
+		OKillPlayer(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OKillPlayer(a->clone());
+		}
+	};
 	class OScreenDoSpawn : public Opcode
 	{
 	public:
@@ -9241,6 +9391,16 @@ namespace ZScript
 			return new OGETEWEAPONSCRIPT(a->clone());
 		}
 	};
+	class OGETGENERICSCRIPT : public UnaryOpcode
+	{
+	public:
+		OGETGENERICSCRIPT(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new OGETGENERICSCRIPT(a->clone());
+		}
+	};
 	class OGETHEROSCRIPT : public UnaryOpcode
 	{
 	public:
@@ -9818,6 +9978,16 @@ namespace ZScript
 		Opcode *clone()
 		{
 			return new OModuleGetIC(a->clone(), b->clone());
+		}
+	};
+	class ORunGenericFrozenScript : public UnaryOpcode
+	{
+	public:
+		ORunGenericFrozenScript(Argument *A) : UnaryOpcode(A) {}
+		std::string toString();
+		Opcode *clone()
+		{
+			return new ORunGenericFrozenScript(a->clone());
 		}
 	};
 }

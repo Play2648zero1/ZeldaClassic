@@ -85,7 +85,7 @@ public:
 	int32_t  clk2,sclk;
 	int32_t  starting_hp;
 	int32_t  ox, oy;
-	word  s_tile; //secondary (additional) tile(s)
+	int32_t  s_tile; //secondary (additional) tile(s)
 	
 	int32_t hitby[NUM_HIT_TYPES_USED];
 	int16_t firesfx;
@@ -137,13 +137,14 @@ public:
 	
 	bool is_move_paused();
 	bool scr_walkflag(int32_t dx,int32_t dy,int32_t special, int32_t dir, int32_t input_x, int32_t input_y, bool kb);
-	bool scr_canmove(zfix dx, zfix dy, int32_t special);
-	bool movexy(zfix dx, zfix dy, int32_t special);
-	bool moveDir(int32_t dir, zfix px, int32_t special);
-	bool moveAtAngle(zfix degrees, zfix px, int32_t special);
-	bool can_movexy(zfix dx, zfix dy, int32_t special);
-	bool can_moveDir(int32_t dir, zfix px, int32_t special);
-	bool can_moveAtAngle(zfix degrees, zfix px, int32_t special);
+	bool scr_canmove(zfix dx, zfix dy, int32_t special, bool kb = false);
+	bool scr_canplace(zfix dx, zfix dy, int32_t special, bool kb = false);
+	bool movexy(zfix dx, zfix dy, int32_t special, bool kb = false);
+	bool moveDir(int32_t dir, zfix px, int32_t special, bool kb = false);
+	bool moveAtAngle(zfix degrees, zfix px, int32_t special, bool kb = false);
+	bool can_movexy(zfix dx, zfix dy, int32_t special, bool kb = false);
+	bool can_moveDir(int32_t dir, zfix px, int32_t special, bool kb = false);
+	bool can_moveAtAngle(zfix degrees, zfix px, int32_t special, bool kb = false);
 	
 	// Handle pitfalls
 	bool do_falling(int32_t index);
@@ -243,7 +244,7 @@ public:
 	// place the enemy in line with Hero (red wizzrobes)
 	void place_on_axis(bool floater, bool solid_ok);
 	void update_enemy_frame();
-	void n_frame_n_dir(int32_t frames, int32_t dir, int32_t f4);
+	int32_t n_frame_n_dir(int32_t frames, int32_t dir, int32_t f4);
 	void tiledir_small(int32_t ndir, bool fourdir);
 	void tiledir_three(int32_t ndir);
 	void tiledir(int32_t ndir, bool fourdir);
@@ -871,7 +872,7 @@ public:
 /**********************************/
 /**********  Misc Code  ***********/
 /**********************************/
-void addEwpn(int32_t x,int32_t y,int32_t z,int32_t id,int32_t type,int32_t power,int32_t dir, int32_t parentid, byte script_gen = 0);
+void addEwpn(int32_t x,int32_t y,int32_t z,int32_t id,int32_t type,int32_t power,int32_t dir, int32_t parentid, byte script_gen = 0, int32_t fakez = 0);
 // Used by Hero's swords & stomp boots
 int32_t hit_enemy(int32_t index,int32_t wpnId,int32_t power,int32_t wpnx,int32_t wpny,int32_t dir, int32_t enemyHitWeapon);
 void enemy_scored(int32_t index);
@@ -879,8 +880,10 @@ void addguy(int32_t x,int32_t y,int32_t id,int32_t clk,bool mainguy);
 void additem(int32_t x,int32_t y,int32_t id,int32_t pickup);
 void additem(int32_t x,int32_t y,int32_t id,int32_t pickup,int32_t clk);
 void kill_em_all();
+bool can_kill_em_all();
 // For Hero's hit detection. Don't count them if they are stunned or are guys.
 int32_t GuyHit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz);
+int32_t GuyHitFrom(int32_t index,int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz);
 // For Hero's hit detection. Count them if they are dying.
 int32_t GuyHit(int32_t index,int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz);
 bool hasMainGuy();

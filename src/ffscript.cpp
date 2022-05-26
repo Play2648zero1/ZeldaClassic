@@ -304,10 +304,11 @@ CConsoleLoggerEx coloured_console;
 extern CConsoleLoggerEx zscript_coloured_console;
 
 
-const char script_types[16][16]=
+const char script_types[][16]=
 {
 	"none", "global", "ffc", "screendata", "hero", "item", "lweapon", "npc", "subscreen",
-	"eweapon", "dmapdata", "itemsprite", "dmapdata (AS)", "dmapdata (PS)", "combodata", "dmapdata (MAP)"
+	"eweapon", "dmapdata", "itemsprite", "dmapdata (AS)", "dmapdata (PS)", "combodata", "dmapdata (MAP)",
+	"generic", "generic (FRZ)"
 };
 	
 int32_t FFScript::UpperToLower(std::string *s)
@@ -544,11 +545,39 @@ int32_t sarg1 = 0;
 int32_t sarg2 = 0;
 refInfo *ri = NULL;
 script_data *curscript = NULL;
+int32_t(*stack)[MAX_SCRIPT_REGISTERS] = NULL;
+
+static std::vector<int32_t> sarg1cache;
+static std::vector<int32_t> sarg2cache;
+static std::vector<refInfo*> ricache;
+static std::vector<script_data*> sdcache;
+static std::vector<int32_t(*)[MAX_SCRIPT_REGISTERS]> stackcache;
+void push_ri()
+{
+	sarg1cache.push_back(sarg1);
+	sarg2cache.push_back(sarg2);
+	ricache.push_back(ri);
+	sdcache.push_back(curscript);
+	stackcache.push_back(stack);
+}
+void pop_ri()
+{
+	sarg1 = sarg1cache.back(); sarg1cache.pop_back();
+	sarg2 = sarg2cache.back(); sarg2cache.pop_back();
+	ri = ricache.back(); ricache.pop_back();
+	curscript = sdcache.back(); sdcache.pop_back();
+	stack = stackcache.back(); stackcache.pop_back();
+}
+
 
 static int32_t numInstructions; // Used to detect hangs
 static bool scriptCanSave = true;
 byte curScriptType;
 word curScriptNum;
+
+std::vector<refInfo*> genericActiveData;
+std::vector<int32_t(*)[MAX_SCRIPT_REGISTERS]> generic_active_stack;
+bool gen_active_doscript = false, gen_active_initialized = false;
 
 //Global script data
 refInfo globalScriptData[NUMSCRIPTGLOBAL];
@@ -598,7 +627,6 @@ int32_t combo_stack[176*7][MAX_SCRIPT_REGISTERS];
 //This is where we need to change the formula. These stacks need to be variable in some manner
 //to permit adding additional scripts to them, without manually sizing them in advance. - Z
 
-int32_t(*stack)[MAX_SCRIPT_REGISTERS] = NULL;
 int32_t ffc_stack[32][MAX_SCRIPT_REGISTERS];
 int32_t global_stack[NUMSCRIPTGLOBAL][MAX_SCRIPT_REGISTERS];
 int32_t item_stack[256][MAX_SCRIPT_REGISTERS];
@@ -611,6 +639,49 @@ int32_t active_subscreen_stack[MAX_SCRIPT_REGISTERS];
 int32_t passive_subscreen_stack[MAX_SCRIPT_REGISTERS];
 int32_t screen_stack[MAX_SCRIPT_REGISTERS];
 refInfo ffcScriptData[32];
+
+user_genscript user_scripts[NUMSCRIPTSGENERIC];
+int32_t genscript_timing = SCR_TIMING_START_FRAME;
+static word max_valid_genscript;
+void countGenScripts()
+{
+	max_valid_genscript = 0;
+	for(auto q = 1; q < NUMSCRIPTSGENERIC; ++q)
+	{
+		if(genericscripts[q] && genericscripts[q]->valid())
+			max_valid_genscript = q;
+	}
+}
+void timeExitAllGenscript(byte exState)
+{
+	for(user_genscript& g : user_scripts)
+		g.timeExit(exState);
+}
+
+void FFScript::runGenericPassiveEngine(int32_t scrtm)
+{
+	if(!max_valid_genscript) return; //No generic scripts in the quest!
+	if(genscript_timing != scrtm)
+	{
+		//zprint2("Generic script timing jump: expected '%d', found '%d'\n", genscript_timing, scrtm);
+		while(genscript_timing != scrtm)
+			runGenericPassiveEngine(genscript_timing);
+	}
+	for(auto q = 1; q <= max_valid_genscript; ++q)
+	{
+		user_genscript& scr = user_scripts[q];
+		if(!scr.doscript) continue;
+		if(!genericscripts[q]->valid()) continue;
+		if(scr.waituntil > scrtm || (!scr.wait_atleast && scr.waituntil != scrtm))
+			continue;
+		
+		//Run the script!
+		ZScriptVersion::RunScript(SCRIPT_GENERIC, q, q);
+	}
+	if(genscript_timing >= SCR_TIMING_END_FRAME)
+		genscript_timing = SCR_TIMING_START_FRAME;
+	else ++genscript_timing;
+}
 
 void clear_ffc_stack(const byte i)
 {
@@ -2505,6 +2576,16 @@ user_file *checkFile(int32_t ref, const char *what, bool req_file = false, bool 
 	return NULL;
 }
 
+user_genscript *checkGenericScr(int32_t ref, const char *what)
+{
+	if(ref < 1 || ref >= NUMSCRIPTSGENERIC)
+	{
+		Z_scripterrlog("Invalid gendata pointer access (%ld) for '->%s'\n", ref, what);
+		return NULL;
+	}
+	return &user_scripts[ref];
+}
+
 user_dir *checkDir(int32_t ref, const char *what, bool skipError = false)
 {
 	if(ref > 0 && ref <= MAX_USER_DIRS)
@@ -2876,6 +2957,10 @@ int32_t get_register(const int32_t arg)
 			ret = Hero.getFall().getZLong() / -100;
 			break;
 			
+		case HEROFAKEJUMP:
+			ret = Hero.getFakeFall().getZLong() / -100;
+			break;
+			
 		case LINKDIR:
 			ret=(int32_t)(Hero.dir)*10000;
 			break;
@@ -3059,6 +3144,15 @@ int32_t get_register(const int32_t arg)
 		case LINKYOFS:
 			ret = (int32_t)(Hero.yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset))*10000;
 			break;
+			
+		case HEROSHADOWXOFS:
+			ret = (int32_t)(Hero.shadowxofs)*10000;
+			break;
+			
+		case HEROSHADOWYOFS:
+			ret = (int32_t)(Hero.shadowyofs)*10000;
+			break;
+			
 		case HEROTOTALDYOFFS:
 			ret = 10000*(((int32_t)(Hero.yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset)))
 				+ ((Hero.switch_hooked && Hero.switchhookstyle == swRISE)
@@ -3102,7 +3196,7 @@ int32_t get_register(const int32_t arg)
 			break;
 		
 		case LINKCANFLICKER:
-			ret= Hero.getCanHeroFlicker()?10000:0;
+			ret= Hero.getCanFlicker()?10000:0;
 			break;
 		case LINKHURTSFX:
 			ret = (int32_t)Hero.getHurtSFX()*10000;
@@ -3204,11 +3298,29 @@ int32_t get_register(const int32_t arg)
 		case HEROFALLCMB:
 			ret = Hero.fallCombo * 10000;
 			break;
+			
+		case HERODROWNCLK:
+			ret = Hero.drownclk * 10000;
+			break;
 		
+		case HERODROWNCMB:
+			ret = Hero.drownCombo * 10000;
+			break;
+			
+		case HEROFAKEZ:
+		{
+			if (get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT))
+			{
+				ret = Hero.getFakeZ().getZLong();
+			}
+			else ret = int32_t(Hero.getFakeZ()) * 10000;
+
+			break;
+		} 
 		case HEROMOVEFLAGS:
 		{
 			int32_t indx = ri->d[rINDEX]/10000;
-			if(BC::checkBounds(indx, 0, 1, "Hero->MoveFlags[]") != SH::_NoError)
+			if(BC::checkBounds(indx, 0, 10, "Hero->MoveFlags[]") != SH::_NoError)
 				ret = 0; //false
 			else
 			{
@@ -3263,6 +3375,12 @@ int32_t get_register(const int32_t arg)
 		case HEROSWITCHMAXTIMER:
 		{
 			ret = Hero.switchhookmaxtime * 10000;
+			break;
+		}
+		
+		case HEROIMMORTAL:
+		{
+			ret = Hero.immortal * 10000;
 			break;
 		}
 		
@@ -3711,6 +3829,14 @@ int32_t get_register(const int32_t arg)
 				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
 			}
 			break;
+		
+		case ITEMFAKEJUMP:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				ret = ((item*)(s))->fakefall.getZLong() / -100;
+				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
+			}
+			break;
 			
 		case ITEMDRAWTYPE:
 			if(0!=(s=checkItem(ri->itemref)))
@@ -3883,6 +4009,21 @@ int32_t get_register(const int32_t arg)
 				ret=((int32_t)(((item*)(s))->yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset)))*10000;
 			}
 			break;
+		
+		case ITEMSHADOWXOFS:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				ret=((int32_t)(((item*)(s))->shadowyofs))*10000;
+			}
+			break;
+			
+		case ITEMSHADOWYOFS:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				ret=((int32_t)(((item*)(s))->shadowxofs))*10000;
+			}
+			break;
+			
 			
 		case ITEMZOFS:
 			if(0!=(s=checkItem(ri->itemref)))
@@ -3970,12 +4111,39 @@ int32_t get_register(const int32_t arg)
 			}
 			break;
 		
+		case ITEMDROWNCLK:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				ret = ((item*)(s))->drownclk * 10000;
+			}
+			break;
+		
+		case ITEMDROWNCMB:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				ret = ((item*)(s))->drownCombo * 10000;
+			}
+			break;
+		
+		case ITEMFAKEZ:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				if ( get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) )
+				{
+					ret=(((item*)(s))->fakez).getZLong();    
+				}
+				else 
+					ret=((int32_t)((item*)(s))->fakez)*10000;
+			}
+			break;
+			
+		
 		case ITEMMOVEFLAGS:
 		{
 			if(0!=(s=checkItem(ri->itemref)))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "itemsprite->MoveFlags[]") != SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "itemsprite->MoveFlags[]") != SH::_NoError)
 					ret = 0; //false
 				else
 				{
@@ -4065,7 +4233,16 @@ int32_t get_register(const int32_t arg)
 				ret = -10000;
 				break;
 			}
-			ret=(itemsbuf[ri->idata].magiccosttimer)*10000;
+			ret=(itemsbuf[ri->idata].magiccosttimer[0])*10000;
+			break;
+		case IDATAMAGICTIMER2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				ret = -10000;
+				break;
+			}
+			ret=(itemsbuf[ri->idata].magiccosttimer[1])*10000;
 			break;
 		case IDATAUSEMVT:
 		{
@@ -4586,7 +4763,16 @@ int32_t get_register(const int32_t arg)
 				ret = -10000;
 				break;
 			}
-			ret=(itemsbuf[ri->idata].magic)*10000;
+			ret=(itemsbuf[ri->idata].cost_amount[0])*10000;
+			break;
+		case IDATACOST2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				ret = -10000;
+				break;
+			}
+			ret=(itemsbuf[ri->idata].cost_amount[1])*10000;
 			break;
 		//cost counter ref
 		case IDATACOSTCOUNTER:
@@ -4596,7 +4782,16 @@ int32_t get_register(const int32_t arg)
 				ret = -10000;
 				break;
 			}
-			ret=(itemsbuf[ri->idata].cost_counter)*10000;
+			ret=(itemsbuf[ri->idata].cost_counter[0])*10000;
+			break;
+		case IDATACOSTCOUNTER2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				ret = -10000;
+				break;
+			}
+			ret=(itemsbuf[ri->idata].cost_counter[1])*10000;
 			break;
 		//Min Hearts to Pick Up
 		case IDATAMINHEARTS:
@@ -4626,7 +4821,7 @@ int32_t get_register(const int32_t arg)
 				ret = -10000;
 				break;
 			}
-			ret=(itemsbuf[ri->idata].misc)*10000;
+			ret=(itemsbuf[ri->idata].misc_flags)*10000;
 			break;
 		//->CSet
 		case IDATACSET:
@@ -4702,6 +4897,15 @@ int32_t get_register(const int32_t arg)
 				break;
 			}
 			ret=(itemsbuf[ri->idata].flags & ITEM_VALIDATEONLY)?10000:0;
+			break;
+		case IDATAVALIDATE2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				ret = 0;
+				break;
+			}
+			ret=(itemsbuf[ri->idata].flags & ITEM_VALIDATEONLY2)?10000:0;
 			break;
 		//->Flags[5]
 		case IDATAFLAGS:
@@ -5104,6 +5308,12 @@ int32_t get_register(const int32_t arg)
 		case NPCYOFS:
 			GET_NPC_VAR_FIX(yofs, "npc->DrawYOffset") ret-=(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset)*10000;
 			break;
+		case NPCSHADOWXOFS:
+			GET_NPC_VAR_FIX(shadowxofs, "npc->ShadowXOffset") break;
+			
+		case NPCSHADOWYOFS:
+			GET_NPC_VAR_FIX(shadowyofs, "npc->ShadowYOffset") break;
+			
 		case NPCTOTALDYOFFS:
 		{
 			if(GuyH::loadNPC(ri->guyref, "npc->TotalDYOffset") != SH::_NoError)
@@ -5129,6 +5339,17 @@ int32_t get_register(const int32_t arg)
 			else
 			{
 				ret = GuyH::getNPC()->fall.getZLong() / -100;
+				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
+			}
+				
+			break;
+		
+		case NPCFAKEJUMP:
+			if(GuyH::loadNPC(ri->guyref, "npc->FakeJump") != SH::_NoError)
+				ret = -10000;
+			else
+			{
+				ret = GuyH::getNPC()->fakefall.getZLong() / -100;
 				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
 			}
 				
@@ -5536,13 +5757,47 @@ int32_t get_register(const int32_t arg)
 				ret = GuyH::getNPC()->fallCombo * 10000;
 			}
 			break;
+			
+		case NPCDROWNCLK:
+			if(GuyH::loadNPC(ri->guyref, "npc->Drowning") == SH::_NoError)
+			{
+				ret = GuyH::getNPC()->drownclk * 10000;
+			}
+			break;
+		
+		case NPCDROWNCMB:
+			if(GuyH::loadNPC(ri->guyref, "npc->DrownCombo") == SH::_NoError)
+			{
+				ret = GuyH::getNPC()->drownCombo * 10000;
+			}
+			break;
+		
+		case NPCFAKEZ:
+		{
+			if(GuyH::loadNPC(ri->guyref, "FakeZ") != SH::_NoError) 
+			{
+				ret = -10000; 
+			}
+			else 
+			{
+				if ( get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) )
+				{
+					ret = ((GuyH::getNPC()->fakez).getZLong()); 
+				}
+				else
+				{
+					ret = (int32_t(GuyH::getNPC()->fakez) * 10000);   
+				}
+			}
+			break;
+		}
 		
 		case NPCMOVEFLAGS:
 		{
 			if(GuyH::loadNPC(ri->guyref, "npc->MoveFlags[]") == SH::_NoError)
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 7, "npc->MoveFlags[]") != SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "npc->MoveFlags[]") != SH::_NoError)
 					ret = 0; //false
 				else
 				{
@@ -5589,6 +5844,12 @@ int32_t get_register(const int32_t arg)
 			if(GuyH::loadNPC(ri->guyref, "npc->SwitchHooked") == SH::_NoError)
 			{
 				ret = GuyH::getNPC()->switch_hooked ? 10000 : 0;
+			}
+			break;
+		case NPCCANFLICKER:
+			if(GuyH::loadNPC(ri->guyref, "npc->InvFlicker") == SH::_NoError)
+			{
+				ret = GuyH::getNPC()->getCanFlicker() ? 10000 : 0;
 			}
 			break;
 		
@@ -5668,6 +5929,15 @@ int32_t get_register(const int32_t arg)
 			}
 				
 			break;
+		
+		case LWPNFAKEJUMP:
+			if(0!=(s=checkLWpn(ri->lwpn,"FakeJump")))
+			{
+				ret = ((weapon*)(s))->fakefall.getZLong() / -100;
+				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
+			}
+				
+			break;
 			
 		case LWPNDIR:
 			if(0!=(s=checkLWpn(ri->lwpn,"Dir")))
@@ -5708,10 +5978,83 @@ int32_t get_register(const int32_t arg)
 				ret=(int32_t)(((weapon*)(s))->angle*10000);
 				
 			break;
+		
+		case LWPNDEGANGLE:
+			if(0!=(s=checkLWpn(ri->lwpn,"DegAngle")))
+			{
+				ret=(int32_t)(((weapon*)(s))->angle*(180.0 / PI)*10000);
+			}
+				
+			break;
 			
+		case LWPNVX:
+			if(0!=(s=checkLWpn(ri->lwpn,"Vx")))
+			{
+				if (((weapon*)(s))->angular)
+					ret = int32_t(cos(((weapon*)s)->angle)*10000.0*((weapon*)s)->step);
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case l_down:
+						case left:
+							ret = int32_t(-10000.0*((weapon*)s)->step);
+							break;
+							
+						case r_down:
+						case r_up:
+						case right:
+							ret = int32_t(10000.0*((weapon*)s)->step);
+							break;
+						
+						default:
+							ret = 0;
+							break;
+					}
+				}
+			}
+				
+			break;
+		
+		case LWPNVY:
+			if(0!=(s=checkLWpn(ri->lwpn,"Vy")))
+			{
+				if (((weapon*)(s))->angular)
+					ret = int32_t(sin(((weapon*)s)->angle)*10000.0*((weapon*)s)->step);
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case r_up:
+						case up:
+							ret = int32_t(-10000.0*((weapon*)s)->step);
+							break;
+						case l_down:
+						case r_down:
+						case down:
+							ret = int32_t(10000.0*((weapon*)s)->step);
+							break;
+							
+						default:
+							ret = 0;
+							break;
+					}
+				}
+			}
+				
+			break;
+				
 		case LWPNANGULAR:
 			if(0!=(s=checkLWpn(ri->lwpn,"Angular")))
 				ret=((weapon*)(s))->angular*10000;
+				
+			break;
+			
+		case LWPNAUTOROTATE:
+			if(0!=(s=checkLWpn(ri->lwpn,"AutoRotate")))
+				ret=((weapon*)(s))->autorotate*10000;
 				
 			break;
 			
@@ -5856,6 +6199,19 @@ int32_t get_register(const int32_t arg)
 				ret=((int32_t)(((weapon*)(s))->yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset)))*10000;
 				
 			break;
+			
+		case LWPNSHADOWXOFS:
+			if(0!=(s=checkLWpn(ri->lwpn,"ShadowXOffset")))
+				ret=((int32_t)(((weapon*)(s))->shadowxofs))*10000;
+				
+			break;
+			
+		case LWPNSHADOWYOFS:
+			if(0!=(s=checkLWpn(ri->lwpn,"ShadowYOffset")))
+				ret=((int32_t)(((weapon*)(s))->shadowyofs))*10000;
+				
+			break;
+			
 		case LWPNTOTALDYOFFS:
 			if(0!=(s=checkLWpn(ri->lwpn,"TotalDYOffset")))
 				ret = ((int32_t)(((weapon*)(s))->yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset))
@@ -5992,12 +6348,38 @@ int32_t get_register(const int32_t arg)
 			}
 			break;
 		
+		case LWPNDROWNCLK:
+			if(0!=(s=checkLWpn(ri->lwpn,"Drowning")))
+			{
+				ret = ((weapon*)(s))->drownclk * 10000;
+			}
+			break;
+		
+		case LWPNDROWNCMB:
+			if(0!=(s=checkLWpn(ri->lwpn,"DrownCombo")))
+			{
+				ret = ((weapon*)(s))->drownCombo * 10000;
+			}
+			break;
+			
+		case LWPNFAKEZ:
+			if(0!=(s=checkLWpn(ri->lwpn,"FakeZ")))
+			{
+				if ( get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) )
+				{
+					ret=(((weapon*)(s))->fakez).getZLong();  
+				}
+				else 
+					ret=((int32_t)((weapon*)(s))->fakez)*10000;
+			}
+			break;
+		
 		case LWPNMOVEFLAGS:
 		{
 			if(0!=(s=checkLWpn(ri->lwpn,"MoveFlags[]")))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "lweapon->MoveFlags[]") != SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "lweapon->MoveFlags[]") != SH::_NoError)
 					ret = 0; //false
 				else
 				{
@@ -6107,6 +6489,15 @@ int32_t get_register(const int32_t arg)
 			}
 				
 			break;
+		
+		case EWPNFAKEJUMP:
+			if(0!=(s=checkEWpn(ri->ewpn, "FakeJump")))
+			{
+				ret = ((weapon*)(s))->fakefall.getZLong() / -100;
+				if (get_bit(quest_rules, qr_SPRITE_JUMP_IS_TRUNCATED)) ret = trunc(ret / 10000) * 10000;
+			}
+				
+			break;
 			
 		case EWPNDIR:
 			if(0!=(s=checkEWpn(ri->ewpn, "Dir")))
@@ -6152,9 +6543,82 @@ int32_t get_register(const int32_t arg)
 				
 			break;
 			
+		case EWPNDEGANGLE:
+			if(0!=(s=checkEWpn(ri->ewpn,"DegAngle")))
+			{
+				ret=(int32_t)(((weapon*)(s))->angle*(180.0 / PI)*10000);
+			}
+				
+			break;
+			
+		case EWPNVX:
+			if(0!=(s=checkEWpn(ri->ewpn,"Vx")))
+			{
+				if (((weapon*)(s))->angular)
+					ret = int32_t(cos(((weapon*)s)->angle)*10000.0*((weapon*)s)->step);
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case l_down:
+						case left:
+							ret = int32_t(-10000.0*((weapon*)s)->step);
+							break;
+						case r_up:
+						case r_down:
+						case right:
+							ret = int32_t(10000.0*((weapon*)s)->step);
+							break;
+							
+						default:
+							ret = 0;
+							break;
+					}
+				}
+			}
+				
+			break;
+		
+		case EWPNVY:
+			if(0!=(s=checkEWpn(ri->ewpn,"Vy")))
+			{
+				if (((weapon*)(s))->angular)
+					ret = int32_t(sin(((weapon*)s)->angle)*10000.0*((weapon*)s)->step);
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case r_up:
+						case up:
+							ret = int32_t(-10000.0*((weapon*)s)->step);
+							break;
+						case l_down:
+						case r_down:
+						case down:
+							ret = int32_t(10000.0*((weapon*)s)->step);
+							break;
+							
+						default:
+							ret = 0;
+							break;
+					}
+				}
+			}
+				
+			break;
+			
+			
 		case EWPNANGULAR:
 			if(0!=(s=checkEWpn(ri->ewpn,"Angular")))
 				ret=((weapon*)(s))->angular*10000;
+				
+			break;
+			
+		case EWPNAUTOROTATE:
+			if(0!=(s=checkEWpn(ri->ewpn,"AutoRotate")))
+				ret=((weapon*)(s))->autorotate*10000;
 				
 			break;
 			
@@ -6305,6 +6769,18 @@ int32_t get_register(const int32_t arg)
 				ret=((int32_t)(((weapon*)(s))->yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset)))*10000;
 				
 			break;
+			
+		case EWPNSHADOWXOFS:
+			if(0!=(s=checkEWpn(ri->ewpn,"ShadowXOffset")))
+				ret=((int32_t)(((weapon*)(s))->shadowxofs))*10000;
+				
+			break;
+			
+		case EWPNSHADOWYOFS:
+			if(0!=(s=checkEWpn(ri->ewpn,"ShadowYOffset")))
+				ret=((int32_t)(((weapon*)(s))->shadowyofs))*10000;
+				
+			break;
 		case EWPNTOTALDYOFFS:
 			if(0!=(s=checkLWpn(ri->ewpn,"TotalDYOffset")))
 				ret = ((int32_t)(((weapon*)(s))->yofs-(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset))
@@ -6417,12 +6893,37 @@ int32_t get_register(const int32_t arg)
 			}
 			break;
 		
+		case EWPNDROWNCLK:
+			if(0!=(s=checkEWpn(ri->ewpn,"Drowning")))
+			{
+				ret = ((weapon*)(s))->drownclk * 10000;
+			}
+			break;
+		
+		case EWPNDROWNCMB:
+			if(0!=(s=checkEWpn(ri->ewpn,"DrownCombo")))
+			{
+				ret = ((weapon*)(s))->drownCombo * 10000;
+			}
+			break;
+		case EWPNFAKEZ:
+			if(0!=(s=checkEWpn(ri->ewpn, "FakeZ")))
+			{
+				if ( get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) )
+				{
+					ret=(((weapon*)(s))->fakez).getZLong();
+				}
+				else 
+					ret=((int32_t)((weapon*)(s))->fakez)*10000;
+			}
+			break;
+		
 		case EWPNMOVEFLAGS:
 		{
 			if(0!=(s=checkEWpn(ri->ewpn,"MoveFlags[]")))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "eweapon->MoveFlags[]") != SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "eweapon->MoveFlags[]") != SH::_NoError)
 					ret = 0; //false
 				else
 				{
@@ -10133,7 +10634,32 @@ int32_t get_register(const int32_t arg)
 			break;
 		}
 		case COMBODTYPE:		GET_COMBO_VAR_BYTE(type, "Type"); break;					//char
-		case COMBODCSET:		GET_COMBO_VAR_BYTE(csets, "CSet"); break;					//C
+		case COMBODCSET:
+		{
+			if(ri->combosref < 0 || ri->combosref > (MAXCOMBOS-1) )
+			{
+				Z_scripterrlog("Invalid Combo ID passed to combodata->%s: %d\n", (ri->combosref*10000), "CSet2");
+				ret = -10000;
+			}
+			else
+			{
+				bool neg = combobuf[ri->combosref].csets&0x8;
+				ret = ((combobuf[ri->combosref].csets&0x7) * (neg ? -10000 : 10000));
+			}
+			break;
+		}
+		case COMBODCSET2FLAGS:
+		{
+			if(ri->combosref < 0 || ri->combosref > (MAXCOMBOS-1) )
+			{
+				Z_scripterrlog("Invalid Combo ID passed to combodata->%s: %d\n", (ri->combosref*10000), "CSet2Flags");
+			}
+			else
+			{
+				ret = ((combobuf[ri->combosref].csets & 0xF0) >> 4) * 10000;
+			}
+			break;
+		}
 		case COMBODFOO:			GET_COMBO_VAR_DWORD(foo, "Foo"); break;						//W
 		case COMBODATASCRIPT:			GET_COMBO_VAR_DWORD(script, "Script"); break;						//W
 		case COMBODFRAMES:		GET_COMBO_VAR_BYTE(frames, "Frames"); break;					//C
@@ -10966,6 +11492,7 @@ int32_t get_register(const int32_t arg)
 		case REFDROPS: ret = ri->dropsetref; break;
 		case REFBOTTLETYPE: ret = ri->bottletyperef; break;
 		case REFBOTTLESHOP: ret = ri->bottleshopref; break;
+		case REFGENERICDATA: ret = ri->genericdataref; break;
 		case REFPONDS: ret = ri->pondref; break;
 		case REFWARPRINGS: ret = ri->warpringref; break;
 		case REFDOORS: ret = ri->doorsref; break;
@@ -11009,6 +11536,86 @@ int32_t get_register(const int32_t arg)
 			break;
 			
 		///----------------------------------------------------------------------------------------------------//
+		
+		case GENDATARUNNING:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "Running"))
+			{
+				ret = scr->doscript ? 10000L : 0L;
+			}
+			break;
+		}
+		case GENDATASIZE:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "DataSize"))
+			{
+				ret = scr->dataSize()*10000;
+			}
+			break;
+		}
+		case GENDATAEXITSTATE:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "ExitState"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= GENSCR_NUMST)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->ExitState[]: %d\n", indx);
+					break;
+				}
+				ret = (scr->exitState & (1<<indx)) ? 10000L : 0;
+			}
+			break;
+		}
+		case GENDATARELOADSTATE:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "ReloadState"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= GENSCR_NUMST)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->ReloadState[]: %d\n", indx);
+					break;
+				}
+				ret = (scr->reloadState & (1<<indx)) ? 10000L : 0;
+			}
+			break;
+		}
+		case GENDATADATA:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "Data[]"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= scr->dataSize())
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->Data[]: %d\n", indx);
+					break;
+				}
+				ret = scr->data[indx];
+			}
+			break;
+		}
+		case GENDATAINITD:
+		{
+			ret = 0;
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "InitD[]"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= 8)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->InitD[]: %d\n", indx);
+					break;
+				}
+				ret = scr->initd[indx];
+			}
+			break;
+		}
+		
 		//Most of this is deprecated I believe ~Joe123
 		default:
 		{
@@ -11243,6 +11850,10 @@ void set_register(const int32_t arg, const int32_t value)
 			
 		case LINKJUMP:
 			Hero.setFall(zslongToFix(value) * -100);
+			break;
+		
+		case HEROFAKEJUMP:
+			Hero.setFakeFall(zslongToFix(value) * -100);
 			break;
 			
 		case LINKDIR:
@@ -11713,6 +12324,14 @@ void set_register(const int32_t arg, const int32_t value)
 		case HEROTOTALDYOFFS:
 			break; //READ-ONLY
 			
+		case HEROSHADOWXOFS:
+			(Hero.shadowxofs)=(zfix)(value/10000);
+			break;
+			
+		case HEROSHADOWYOFS:
+			(Hero.shadowyofs)=(zfix)(value/10000);
+			break;
+			
 		case LINKZOFS:
 			(Hero.zofs)=(zfix)(value/10000);
 			break;
@@ -11752,7 +12371,7 @@ void set_register(const int32_t arg, const int32_t value)
 			break;
 		
 		case LINKCANFLICKER:
-			Hero.setCanHeroFlicker((value/10000)?1:0);
+			Hero.setCanFlicker((value/10000)?1:0);
 			break;
 		
 		case LINKHURTSFX:
@@ -11946,13 +12565,42 @@ void set_register(const int32_t arg, const int32_t value)
 		case HEROFALLCMB:
 			Hero.fallCombo = vbound(value/10000,0,MAXCOMBOS-1);
 			break;
+		case HERODROWNCLK:
+		{
+			int32_t val = vbound(value/10000,0,70);
+			if(val)
+			{
+				if (Hero.action != lavadrowning) Hero.setAction(drowning);
+			}
+			else if(Hero.action == drowning || Hero.action == lavadrowning)
+			{
+				Hero.setAction(none);
+			}
+			Hero.drownclk = val;
+			break;
+		}
+		case HERODROWNCMB:
+			Hero.drownCombo = vbound(value/10000,0,MAXCOMBOS-1);
+			break;
+		case HEROFAKEZ:
+			{
+				if ( get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) )
+				{
+					Hero.setFakeZfix(zslongToFix(value));
+				}
+				else
+				{
+					Hero.setFakeZ(value/10000);
+				}
+			}
+			break;
 		case HEROMOVEFLAGS:
 		{
 			int32_t indx = ri->d[rINDEX]/10000;
-			if(BC::checkBounds(indx, 0, 1, "Hero->MoveFlags[]") == SH::_NoError)
+			if(BC::checkBounds(indx, 0, 10, "Hero->MoveFlags[]") == SH::_NoError)
 			{
 				//All bits, in order, of a single byte; just use bitwise
-				byte bit = 1<<indx;
+				int32_t bit = 1<<indx;
 				if(value)
 					Hero.moveflags |= bit;
 				else
@@ -12001,6 +12649,13 @@ void set_register(const int32_t arg, const int32_t value)
 		case HEROSWITCHMAXTIMER:
 		case HEROSWITCHTIMER:
 			break; //read-only
+		
+		case HEROIMMORTAL:
+		{
+			Hero.setImmortal(value/10000);
+			break;
+		}
+		
 		
 	///----------------------------------------------------------------------------------------------------//
 	//Input States
@@ -12477,6 +13132,14 @@ void set_register(const int32_t arg, const int32_t value)
 			}
 			
 			break;
+		
+		case ITEMFAKEJUMP:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				(((item *)s)->fakefall)=zslongToFix(value)*-100;
+			}
+			
+			break;
 			
 		case ITEMDRAWTYPE:
 			if(0!=(s=checkItem(ri->itemref)))
@@ -12696,6 +13359,22 @@ void set_register(const int32_t arg, const int32_t value)
 			
 			break;
 			
+		case ITEMSHADOWXOFS:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				((item*)(s))->shadowxofs=(zfix)(value/10000);
+			}
+			
+			break;
+		
+		case ITEMSHADOWYOFS:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				((item*)(s))->shadowyofs=(zfix)(value/10000);
+			}
+			
+			break;
+		
 		case ITEMZOFS:
 			if(0!=(s=checkItem(ri->itemref)))
 			{
@@ -12871,15 +13550,44 @@ void set_register(const int32_t arg, const int32_t value)
 				((item*)(s))->fallCombo = vbound(value/10000,0,MAXCOMBOS-1);
 			}
 			break;
+		case ITEMDROWNCLK:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				if(((item*)(s))->drownclk != 0 && value == 0)
+				{
+					((item*)(s))->cs = ((item*)(s))->old_cset;
+					((item*)(s))->tile = ((item*)(s))->o_tile;
+				}
+				else if(((item*)(s))->drownclk == 0 && value != 0) ((item*)(s))->old_cset = ((item*)(s))->cs;
+				((item*)(s))->drownclk = vbound(value/10000,0,70);
+			}
+			break;
+		case ITEMDROWNCMB:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				((item*)(s))->drownCombo = vbound(value/10000,0,MAXCOMBOS-1);
+			}
+			break;
+		case ITEMFAKEZ:
+			if(0!=(s=checkItem(ri->itemref)))
+			{
+				(s->fakez)=(zfix)(value/10000);
+				
+				if(s->fakez < 0)
+					s->fakez = 0;
+			}
+			
+			break;
+		
 		case ITEMMOVEFLAGS:
 		{
 			if(0!=(s=checkItem(ri->itemref)))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "itemsprite->MoveFlags[]") == SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "itemsprite->MoveFlags[]") == SH::_NoError)
 				{
 					//All bits, in order, of a single byte; just use bitwise
-					byte bit = 1<<indx;
+					int32_t bit = 1<<indx;
 					if(value)
 						((item*)(s))->moveflags |= bit;
 					else
@@ -12970,7 +13678,15 @@ void set_register(const int32_t arg, const int32_t value)
 				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
 				break;
 			}
-			(itemsbuf[ri->idata].magiccosttimer)=vbound(value/10000, 0, 214747);
+			(itemsbuf[ri->idata].magiccosttimer[0])=vbound(value/10000, 0, 214747);
+			break;
+		case IDATAMAGICTIMER2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				break;
+			}
+			(itemsbuf[ri->idata].magiccosttimer[1])=vbound(value/10000, 0, 214747);
 			break;
 		case IDATADURATION:
 			if(unsigned(ri->idata) >= MAXITEMS)
@@ -13333,6 +14049,14 @@ void set_register(const int32_t arg, const int32_t value)
 			}
 			(value) ? (itemsbuf[ri->idata].flags)|=ITEM_VALIDATEONLY: (itemsbuf[ri->idata].flags)&= ~ITEM_VALIDATEONLY;
 			break;
+		case IDATAVALIDATE2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				break;
+			}
+			SETFLAG(itemsbuf[ri->idata].flags, ITEM_VALIDATEONLY2, value);
+			break;
 
 		//Flags[5]
 		case IDATAFLAGS:
@@ -13590,7 +14314,15 @@ void set_register(const int32_t arg, const int32_t value)
 				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
 				break;
 			}
-			itemsbuf[ri->idata].magic=value/10000;
+			itemsbuf[ri->idata].cost_amount[0]=vbound(value/10000,32767,-32768);
+			break;
+		case IDATACOST2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				break;
+			}
+			itemsbuf[ri->idata].cost_amount[1]=vbound(value/10000,32767,-32768);
 			break;
 		//cost counter ref
 		case IDATACOSTCOUNTER:
@@ -13599,7 +14331,15 @@ void set_register(const int32_t arg, const int32_t value)
 				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
 				break;
 			}
-			itemsbuf[ri->idata].cost_counter=(vbound(value/10000,-1,32));
+			itemsbuf[ri->idata].cost_counter[0]=(vbound(value/10000,-1,32));
+			break;
+		case IDATACOSTCOUNTER2:
+			if(unsigned(ri->idata) >= MAXITEMS)
+			{
+				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
+				break;
+			}
+			itemsbuf[ri->idata].cost_counter[1]=(vbound(value/10000,-1,32));
 			break;
 		//min hearts to pick up
 		case IDATAMINHEARTS:
@@ -13626,7 +14366,7 @@ void set_register(const int32_t arg, const int32_t value)
 				Z_scripterrlog("Invalid itemdata access: %d\n", ri->idata);
 				break;
 			}
-			itemsbuf[ri->idata].misc=value/10000;
+			itemsbuf[ri->idata].misc_flags=value/10000;
 			break;
 		//cset
 		case IDATACSET:
@@ -13733,9 +14473,18 @@ void set_register(const int32_t arg, const int32_t value)
 				
 			break;
 			
+		case LWPNFAKEJUMP:
+			if(0!=(s=checkLWpn(ri->lwpn,"FakeJump")))
+				((weapon*)s)->fakefall=zslongToFix(value)*-100;
+				
+			break;
+			
 		case LWPNDIR:
 			if(0!=(s=checkLWpn(ri->lwpn,"Dir")))
+			{
 				((weapon*)s)->dir=(value/10000);
+				((weapon*)s)->doAutoRotate(true);
+			}
 				
 			break;
 			
@@ -13779,19 +14528,114 @@ void set_register(const int32_t arg, const int32_t value)
 			
 		case LWPNANGLE:
 			if(0!=(s=checkLWpn(ri->lwpn,"Angle")))
+			{
 				((weapon*)s)->angle=(double)(value/10000.0);
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+			
+		case LWPNDEGANGLE:
+			if(0!=(s=checkLWpn(ri->lwpn,"DegAngle")))
+			{
+				double rangle = (value / 10000.0) * (PI / 180.0);
+				((weapon*)s)->angle=(double)(rangle);
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+			
+		case LWPNVX:
+			if(0!=(s=checkLWpn(ri->lwpn,"Vx")))
+			{
+				double vy;
+				double vx = (value / 10000.0);
+				if (((weapon*)(s))->angular)
+					vy = sin(((weapon*)s)->angle)*((weapon*)s)->step;
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case r_up:
+						case up:
+							vy = -1.0*((weapon*)s)->step;
+							break;
+						case l_down:
+						case r_down:
+						case down:
+							vy = ((weapon*)s)->step;
+							break;
+							
+						default:
+							vy = 0;
+							break;
+					}
+				}
+				((weapon*)s)->angular = true;
+				((weapon*)s)->angle=atan2(vy, vx);
+				((weapon*)s)->step=FFCore.Distance(0, 0, vx, vy)/10000.0;
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+		
+		case LWPNVY:
+			if(0!=(s=checkLWpn(ri->lwpn,"Vy")))
+			{
+				double vx;
+				double vy = (value / 10000.0);
+				if (((weapon*)(s))->angular)
+					vx = cos(((weapon*)s)->angle)*((weapon*)s)->step;
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case l_down:
+						case left:
+							vx = -1.0*((weapon*)s)->step;
+							break;
+						case r_down:
+						case r_up:
+						case right:
+							vx = ((weapon*)s)->step;
+							break;
+							
+						default:
+							vx = 0;
+							break;
+					}
+				}
+				((weapon*)s)->angular = true;
+				((weapon*)s)->angle=atan2(vy, vx);
+				((weapon*)s)->step=FFCore.Distance(0, 0, vx, vy)/10000.0;
+				((weapon*)(s))->doAutoRotate();
+			}
 				
 			break;
 			
 		case LWPNANGULAR:
 			if(0!=(s=checkLWpn(ri->lwpn,"Angular")))
-				((weapon*)s)->angular=(value/10000) != 0;
+			{
+				((weapon*)s)->angular=(value!=0);
+				((weapon*)(s))->doAutoRotate(false, true);
+			}
+				
+			break;
+			
+		case LWPNAUTOROTATE:
+			if(0!=(s=checkLWpn(ri->lwpn,"AutoRotate")))
+			{
+				((weapon*)s)->autorotate=(value!=0);
+				((weapon*)(s))->doAutoRotate(false, true);
+			}
 				
 			break;
 			
 		case LWPNBEHIND:
 			if(0!=(s=checkLWpn(ri->lwpn,"Behind")))
-				((weapon*)s)->behind=(value/10000) != 0;
+				((weapon*)s)->behind=(value!=0);
 				
 			break;
 			
@@ -13945,6 +14789,19 @@ void set_register(const int32_t arg, const int32_t value)
 				(((weapon*)s)->yofs)=(zfix)(value/10000)+(get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset);
 				
 			break;
+		
+		case LWPNSHADOWXOFS:
+			if(0!=(s=checkLWpn(ri->lwpn,"ShadowXOffset")))
+				(((weapon*)s)->shadowxofs)=(zfix)(value/10000);
+				
+			break;
+		
+		case LWPNSHADOWYOFS:
+			if(0!=(s=checkLWpn(ri->lwpn,"ShadowYOffset")))
+				(((weapon*)s)->shadowyofs)=(zfix)(value/10000);
+				
+			break;
+			
 		case LWPNTOTALDYOFFS:
 			break; //READ-ONLY
 			
@@ -14073,15 +14930,42 @@ void set_register(const int32_t arg, const int32_t value)
 				((weapon*)(s))->fallCombo = vbound(value/10000,0,MAXCOMBOS-1);
 			}
 			break;
+		case LWPNDROWNCLK:
+			if(0!=(s=checkLWpn(ri->lwpn,"Drowning")))
+			{
+				if(((weapon*)(s))->drownclk != 0 && value == 0)
+				{
+					((weapon*)(s))->cs = ((weapon*)(s))->old_cset;
+					((weapon*)(s))->tile = ((weapon*)(s))->o_tile;
+				}
+				else if(((weapon*)(s))->drownclk == 0 && value != 0) ((weapon*)(s))->old_cset = ((weapon*)(s))->cs;
+				((weapon*)(s))->drownclk = vbound(value/10000,0,70);
+			}
+			break;
+		case LWPNDROWNCMB:
+			if(0!=(s=checkLWpn(ri->lwpn,"DrownCombo")))
+			{
+				((weapon*)(s))->drownCombo = vbound(value/10000,0,MAXCOMBOS-1);
+			}
+			break;
+		case LWPNFAKEZ:
+			if(0!=(s=checkLWpn(ri->lwpn,"FakeZ")))
+			{
+				((weapon*)s)->fakez=get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) ? zslongToFix(value) : zfix(value/10000);
+				if(((weapon*)s)->fakez < 0) ((weapon*)s)->fakez = zfix(0);
+			}
+				
+			break;
+			
 		case LWPNMOVEFLAGS:
 		{
 			if(0!=(s=checkLWpn(ri->lwpn,"MoveFlags[]")))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "lweapon->MoveFlags[]") == SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "lweapon->MoveFlags[]") == SH::_NoError)
 				{
 					//All bits, in order, of a single byte; just use bitwise
-					byte bit = 1<<indx;
+					int32_t bit = 1<<indx;
 					if(value)
 						((weapon*)(s))->moveflags |= bit;
 					else
@@ -14169,9 +15053,18 @@ void set_register(const int32_t arg, const int32_t value)
 				
 			break;
 			
+		case EWPNFAKEJUMP:
+			if(0!=(s=checkEWpn(ri->ewpn,"FakeJump")))
+				((weapon*)s)->fakefall=zslongToFix(value)*-100;
+				
+			break;
+			
 		case EWPNDIR:
 			if(0!=(s=checkEWpn(ri->ewpn,"Dir")))
+			{
 				((weapon*)s)->dir=(value/10000);
+				((weapon*)s)->doAutoRotate(true);
+			}
 				
 			break;
 			
@@ -14215,19 +15108,114 @@ void set_register(const int32_t arg, const int32_t value)
 			
 		case EWPNANGLE:
 			if(0!=(s=checkEWpn(ri->ewpn,"Angle")))
+			{
 				((weapon*)s)->angle=(double)(value/10000.0);
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+			
+		case EWPNDEGANGLE:
+			if(0!=(s=checkEWpn(ri->ewpn,"DegAngle")))
+			{
+				double rangle = (value / 10000.0) * (PI / 180.0);
+				((weapon*)s)->angle=(double)(rangle);
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+			
+		case EWPNVX:
+			if(0!=(s=checkEWpn(ri->ewpn,"Vx")))
+			{
+				double vy;
+				double vx = (value / 10000.0);
+				if (((weapon*)(s))->angular)
+					vy = sin(((weapon*)s)->angle)*((weapon*)s)->step;
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case r_up:
+						case up:
+							vy = -1.0*((weapon*)s)->step;
+							break;
+						case l_down:
+						case r_down:
+						case down:
+							vy = ((weapon*)s)->step;
+							break;
+							
+						default:
+							vy = 0;
+							break;
+					}
+				}
+				((weapon*)s)->angular = true;
+				((weapon*)s)->angle=atan2(vy, vx);
+				((weapon*)s)->step=FFCore.Distance(0, 0, vx, vy)/10000;
+				((weapon*)(s))->doAutoRotate();
+			}
+				
+			break;
+		
+		case EWPNVY:
+			if(0!=(s=checkEWpn(ri->ewpn,"Vy")))
+			{
+				double vx;
+				double vy = (value / 10000.0);
+				if (((weapon*)(s))->angular)
+					vx = cos(((weapon*)s)->angle)*((weapon*)s)->step;
+				else
+				{
+					switch(NORMAL_DIR(((weapon*)(s))->dir))
+					{
+						case l_up:
+						case l_down:
+						case left:
+							vx = -1.0*((weapon*)s)->step;
+							break;
+						case r_down:
+						case r_up:
+						case right:
+							vx = ((weapon*)s)->step;
+							break;
+							
+						default:
+							vx = 0;
+							break;
+					}
+				}
+				((weapon*)s)->angular = true;
+				((weapon*)s)->angle=atan2(vy, vx);
+				((weapon*)s)->step=FFCore.Distance(0, 0, vx, vy)/10000;
+				((weapon*)(s))->doAutoRotate();
+			}
 				
 			break;
 			
 		case EWPNANGULAR:
 			if(0!=(s=checkEWpn(ri->ewpn,"Angular")))
-				((weapon*)s)->angular=(value/10000) != 0;
+			{
+				((weapon*)s)->angular=(value!=0);
+				((weapon*)(s))->doAutoRotate(false, true);
+			}
+				
+			break;
+			
+		case EWPNAUTOROTATE:
+			if(0!=(s=checkEWpn(ri->ewpn,"AutoRotate")))
+			{
+				((weapon*)s)->autorotate=(value!=0);
+				((weapon*)(s))->doAutoRotate(false, true);
+			}
 				
 			break;
 			
 		case EWPNBEHIND:
 			if(0!=(s=checkEWpn(ri->ewpn,"Behind")))
-				((weapon*)s)->behind=(value/10000) != 0;
+				((weapon*)s)->behind=(value!=0);
 				
 			break;
 			
@@ -14374,6 +15362,18 @@ void set_register(const int32_t arg, const int32_t value)
 		case EWPNTOTALDYOFFS:
 			break; //READ-ONLY
 			
+		case EWPNSHADOWXOFS:
+			if(0!=(s=checkEWpn(ri->ewpn,"ShadowXOffset")))
+				(((weapon*)s)->shadowxofs)=(zfix)(value/10000);
+				
+			break;
+			
+		case EWPNSHADOWYOFS:
+			if(0!=(s=checkEWpn(ri->ewpn,"ShadowYOffset")))
+				(((weapon*)s)->shadowyofs)=(zfix)(value/10000);
+				
+			break;
+			
 		case EWPNZOFS:
 			if(0!=(s=checkEWpn(ri->ewpn,"DrawZOffset")))
 				(((weapon*)s)->zofs)=(zfix)(value/10000);
@@ -14483,15 +15483,42 @@ void set_register(const int32_t arg, const int32_t value)
 				((weapon*)(s))->fallCombo = vbound(value/10000,0,MAXCOMBOS-1);
 			}
 			break;
+		case EWPNDROWNCLK:
+			if(0!=(s=checkEWpn(ri->ewpn,"Drowning")))
+			{
+				if(((weapon*)(s))->drownclk != 0 && value == 0)
+				{
+					((weapon*)(s))->cs = ((weapon*)(s))->old_cset;
+					((weapon*)(s))->tile = ((weapon*)(s))->o_tile;
+				}
+				else if(((weapon*)(s))->drownclk == 0 && value != 0) ((weapon*)(s))->old_cset = ((weapon*)(s))->cs;
+				((weapon*)(s))->drownclk = vbound(value/10000,0,70);
+			}
+			break;
+		case EWPNDROWNCMB:
+			if(0!=(s=checkEWpn(ri->ewpn,"DrownCombo")))
+			{
+				((weapon*)(s))->drownCombo = vbound(value/10000,0,MAXCOMBOS-1);
+			}
+			break;
+		case EWPNFAKEZ:
+			if(0!=(s=checkEWpn(ri->ewpn,"FakeZ")))
+			{
+				((weapon*)s)->fakez=get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) ? zslongToFix(value) : zfix(value/10000);
+				if(((weapon*)s)->fakez < 0) ((weapon*)s)->fakez = zfix(0);
+			}
+				
+			break;
+			
 		case EWPNMOVEFLAGS:
 		{
 			if(0!=(s=checkEWpn(ri->ewpn,"MoveFlags[]")))
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 1, "eweapon->MoveFlags[]") == SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "eweapon->MoveFlags[]") == SH::_NoError)
 				{
 					//All bits, in order, of a single byte; just use bitwise
-					byte bit = 1<<indx;
+					int32_t bit = 1<<indx;
 					if(value)
 						((weapon*)(s))->moveflags |= bit;
 					else
@@ -14655,6 +15682,19 @@ void set_register(const int32_t arg, const int32_t value)
 		}
 		break;
 		
+		case NPCFAKEJUMP:
+		{
+			if(GuyH::loadNPC(ri->guyref, "npc->FakeJump") == SH::_NoError)
+			{
+				if(canfall(GuyH::getNPC()->id))
+					GuyH::getNPC()->fakefall =zslongToFix(value)*-100;
+					
+				if(GuyH::hasHero())
+					Hero.setFakeFall(zslongToFix(value)*-100);
+			}
+		}
+		break;
+		
 		case NPCSTEP:
 		{
 			if(GuyH::loadNPC(ri->guyref, "npc->Step") == SH::_NoError)
@@ -14702,6 +15742,21 @@ void set_register(const int32_t arg, const int32_t value)
 				GuyH::getNPC()->yofs = zfix(value / 10000) + (get_bit(quest_rules, qr_OLD_DRAWOFFSET)?playing_field_offset:original_playing_field_offset);
 		}
 		break;
+		
+		case NPCSHADOWXOFS:
+		{
+			if(GuyH::loadNPC(ri->guyref, "npc->ShadowXOffset") == SH::_NoError)
+				GuyH::getNPC()->shadowxofs = zfix(value / 10000);
+		}
+		break;
+		
+		case NPCSHADOWYOFS:
+		{
+			if(GuyH::loadNPC(ri->guyref, "npc->ShadowYOffset") == SH::_NoError)
+				GuyH::getNPC()->shadowyofs = zfix(value / 10000);
+		}
+		break;
+		
 		case NPCTOTALDYOFFS:
 			break; //READ-ONLY
 		
@@ -15284,15 +16339,49 @@ void set_register(const int32_t arg, const int32_t value)
 				GuyH::getNPC()->fallCombo = vbound(value/10000,0,MAXCOMBOS-1);
 			}
 			break;
+		case NPCDROWNCLK:
+			if(GuyH::loadNPC(ri->guyref, "npc->Drowning") == SH::_NoError)
+			{
+				if(GuyH::getNPC()->drownclk != 0 && value == 0)
+				{
+					GuyH::getNPC()->cs = GuyH::getNPC()->old_cset;
+					GuyH::getNPC()->tile = GuyH::getNPC()->o_tile;
+				}
+				else if(GuyH::getNPC()->drownclk == 0 && value != 0) GuyH::getNPC()->old_cset = GuyH::getNPC()->cs;
+				GuyH::getNPC()->drownclk = vbound(value/10000,0,70);
+			}
+			break;
+		case NPCDROWNCMB:
+			if(GuyH::loadNPC(ri->guyref, "npc->DrowningCombo") == SH::_NoError)
+			{
+				GuyH::getNPC()->drownCombo = vbound(value/10000,0,MAXCOMBOS-1);
+			}
+		case NPCFAKEZ:
+			{
+				if(GuyH::loadNPC(ri->guyref, "npc->FakeZ") == SH::_NoError)
+				{
+					if(!never_in_air(GuyH::getNPC()->id))
+					{
+						if(value < 0)
+							GuyH::getNPC()->fakez = zfix(0);
+						else
+							GuyH::getNPC()->fakez = get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) ? zslongToFix(value) : zfix(value/10000);
+							
+						if(GuyH::hasHero())
+							Hero.setFakeZfix(get_bit(quest_rules,qr_SPRITEXY_IS_FLOAT) ? zslongToFix(value) : zfix(value/10000));
+					}
+				}
+			}
+			break;
 		case NPCMOVEFLAGS:
 		{
 			if(GuyH::loadNPC(ri->guyref, "npc->MoveFlags[]") == SH::_NoError)
 			{
 				int32_t indx = ri->d[rINDEX]/10000;
-				if(BC::checkBounds(indx, 0, 7, "npc->MoveFlags[]") == SH::_NoError)
+				if(BC::checkBounds(indx, 0, 10, "npc->MoveFlags[]") == SH::_NoError)
 				{
 					//All bits, in order, of a single byte; just use bitwise
-					byte bit = 1<<indx;
+					int32_t bit = 1<<indx;
 					if(value)
 						GuyH::getNPC()->moveflags |= bit;
 					else
@@ -15335,6 +16424,12 @@ void set_register(const int32_t arg, const int32_t value)
 			break;
 		case NPCSWHOOKED:
 			break; //read-only
+		case NPCCANFLICKER:
+			if(GuyH::loadNPC(ri->guyref, "npc->InvFlicker") == SH::_NoError)
+			{
+				GuyH::getNPC()->setCanFlicker(value != 0);
+			}
+			break;
 		
 		
 	///----------------------------------------------------------------------------------------------------//
@@ -17238,11 +18333,11 @@ void set_register(const int32_t arg, const int32_t value)
 		case MAPDATAEXITDIR: 		SET_MAPDATA_VAR_BYTE(exitdir, "ExitDir"); break;	//b
 		case MAPDATAENEMY: 
 		{ 
-			int32_t indx = (ri->d[rINDEX] / 10000)-1;
+			int32_t indx = (ri->d[rINDEX] / 10000);
 			int32_t enemyid = value/10000;
 			if( ((unsigned)indx) > 9 ) 
 			{ 
-				Z_scripterrlog("Invalid Index passed to mapdata->%s[]: %d\n", (indx+1), "Enemy[]");
+				Z_scripterrlog("Invalid Index passed to mapdata->%s[]: %d\n", (indx), "Enemy[]");
 			} 
 			else if ( ((unsigned)enemyid) > MAXGUYS ) 
 			{ 
@@ -18917,7 +20012,33 @@ void set_register(const int32_t arg, const int32_t value)
 			break;
 		}
 		case COMBODTYPE:	SET_COMBO_VAR_BYTE(type, "Type"); break;						//char
-		case COMBODCSET:	SET_COMBO_VAR_BYTE(csets, "CSet"); break;						//C
+		case COMBODCSET:
+		{
+			if(ri->combosref < 0 || ri->combosref > (MAXCOMBOS-1) )
+			{
+				Z_scripterrlog("Invalid Combo ID passed to combodata->%s: %d\n", (ri->combosref*10000), "CSet2");
+			}
+			else
+			{
+				int8_t v = vbound(value, -8, 7);
+				combobuf[ri->combosref].csets &= ~0xF;
+				combobuf[ri->combosref].csets |= v;
+			}
+			break;
+		}
+		case COMBODCSET2FLAGS:
+		{
+			if(ri->combosref < 0 || ri->combosref > (MAXCOMBOS-1) )
+			{
+				Z_scripterrlog("Invalid Combo ID passed to combodata->%s: %d\n", (ri->combosref*10000), "CSet2Flags");
+			}
+			else
+			{
+				combobuf[ri->combosref].csets &= 0xF;
+				combobuf[ri->combosref].csets |= (value&0xF)<<4;
+			}
+			break;
+		}
 		case COMBODFOO:		SET_COMBO_VAR_DWORD(foo, "Foo"); break;							//W
 		case COMBODFRAMES:	SET_COMBO_VAR_BYTE(frames, "Frames"); break;						//C
 		case COMBODNEXTD:	SET_COMBO_VAR_DWORD(speed, "NextData"); break;						//W
@@ -19692,6 +20813,7 @@ void set_register(const int32_t arg, const int32_t value)
 		case REFDROPS:  ri->dropsetref = value; break;
 		case REFBOTTLETYPE:  ri->bottletyperef = value; break;
 		case REFBOTTLESHOP:  ri->bottleshopref = value; break;
+		case REFGENERICDATA:  ri->genericdataref = value; break;
 		case REFPONDS:  ri->pondref = value; break;
 		case REFWARPRINGS:  ri->warpringref = value; break;
 		case REFDOORS:  ri->doorsref = value; break;
@@ -19706,7 +20828,83 @@ void set_register(const int32_t arg, const int32_t value)
 		case REFDIRECTORY: ri->directoryref = value; break;
 		case REFSUBSCREEN: ri->subscreenref = value; break;
 		case REFRNG: ri->rngref = value; break;
-			
+		
+		case GENDATARUNNING:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "Running"))
+			{
+				if(value)
+					scr->launch();
+				else scr->quit();
+			}
+			break;
+		}
+		case GENDATASIZE:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "DataSize"))
+			{
+				scr->dataResize(value/10000);
+			}
+			break;
+		}
+		case GENDATAEXITSTATE:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "ExitState"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= GENSCR_NUMST)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->ReloadState[]: %d\n", indx);
+					break;
+				}
+				SETFLAG(scr->exitState, (1<<indx), value);
+			}
+			break;
+		}
+		case GENDATARELOADSTATE:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "ReloadState"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= GENSCR_NUMST)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->ReloadState[]: %d\n", indx);
+					break;
+				}
+				SETFLAG(scr->reloadState, (1<<indx), value);
+			}
+			break;
+		}
+		case GENDATADATA:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "Data[]"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= scr->dataSize())
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->Data[]: %d\n", indx);
+					break;
+				}
+				scr->data[indx] = value;
+			}
+			break;
+		}
+		case GENDATAINITD:
+		{
+			if(user_genscript* scr = checkGenericScr(ri->genericdataref, "InitD[]"))
+			{
+				size_t indx = ri->d[rINDEX]/10000;
+				if(indx >= 8)
+				{
+					Z_scripterrlog("Invalid index passed to genericdata->InitD[]: %d\n", indx);
+					break;
+				}
+				scr->initd[indx] = value;
+			}
+			break;
+		}
+		
+		
 		default:
 		{
 			if(arg >= D(0) && arg <= D(7))			ri->d[arg - D(0)] = value;
@@ -20090,6 +21288,21 @@ void do_trig(const bool v, const byte type)
 			set_register(sarg1, int32_t(tan(rangle) * 10000.0));
 			break;
 	}
+}
+
+void do_degtorad()
+{
+	double rangle = (SH::get_arg(sarg2, false) / 10000.0) * (PI / 180.0);
+	rangle += rangle < 0?-0.00005:0.00005;
+	
+	set_register(sarg1, int32_t(rangle * 10000.0));
+}
+
+void do_radtodeg()
+{
+	double rangle = (SH::get_arg(sarg2, false) / 10000.0) * (180.0 / PI);
+	
+	set_register(sarg1, int32_t(rangle * 10000.0));
 }
 
 void do_asin(const bool v)
@@ -21506,6 +22719,132 @@ void do_isvalidewpn()
 	set_register(sarg1, 0);
 }
 
+void do_lwpnmakeangular()
+{
+	if(LwpnH::loadWeapon(ri->lwpn, "lweapon->MakeAngular") == SH::_NoError)
+	{
+		if (!LwpnH::getWeapon()->angular)
+		{
+			double vx;
+			double vy;
+			switch(NORMAL_DIR(LwpnH::getWeapon()->dir))
+			{
+				case l_up:
+				case l_down:
+				case left:
+					vx = -1.0*((weapon*)s)->step;
+					break;
+				case r_down:
+				case r_up:
+				case right:
+					vx = ((weapon*)s)->step;
+					break;
+					
+				default:
+					vx = 0;
+					break;
+			}
+			switch(NORMAL_DIR(LwpnH::getWeapon()->dir))
+			{
+				case l_up:
+				case r_up:
+				case up:
+					vy = -1.0*((weapon*)s)->step;
+					break;
+				case l_down:
+				case r_down:
+				case down:
+					vy = ((weapon*)s)->step;
+					break;
+					
+				default:
+					vy = 0;
+					break;
+			}
+			LwpnH::getWeapon()->angular = true;
+			LwpnH::getWeapon()->angle=atan2(vy, vx);
+			LwpnH::getWeapon()->step=FFCore.Distance(0, 0, vx, vy)/10000.0;
+			LwpnH::getWeapon()->doAutoRotate();
+		}
+	}
+}
+
+void do_lwpnmakedirectional()
+{
+	if(LwpnH::loadWeapon(ri->lwpn, "lweapon->MakeDirectional") == SH::_NoError)
+	{
+		if (LwpnH::getWeapon()->angular)
+		{
+			LwpnH::getWeapon()->dir = NORMAL_DIR(AngleToDir(WrapAngle(LwpnH::getWeapon()->angle)));
+			LwpnH::getWeapon()->angular = false;
+			LwpnH::getWeapon()->doAutoRotate(true);
+		}
+	}
+}
+
+void do_ewpnmakeangular()
+{
+	if(EwpnH::loadWeapon(ri->ewpn, "eweapon->MakeAngular") == SH::_NoError)
+	{
+		if (!EwpnH::getWeapon()->angular)
+		{
+			double vx;
+			double vy;
+			switch(NORMAL_DIR(EwpnH::getWeapon()->dir))
+			{
+				case l_up:
+				case l_down:
+				case left:
+					vx = -1.0*((weapon*)s)->step;
+					break;
+				case r_down:
+				case r_up:
+				case right:
+					vx = ((weapon*)s)->step;
+					break;
+					
+				default:
+					vx = 0;
+					break;
+			}
+			switch(NORMAL_DIR(EwpnH::getWeapon()->dir))
+			{
+				case l_up:
+				case r_up:
+				case up:
+					vy = -1.0*((weapon*)s)->step;
+					break;
+				case l_down:
+				case r_down:
+				case down:
+					vy = ((weapon*)s)->step;
+					break;
+					
+				default:
+					vy = 0;
+					break;
+			}
+			EwpnH::getWeapon()->angular = true;
+			EwpnH::getWeapon()->angle=atan2(vy, vx);
+			EwpnH::getWeapon()->step=FFCore.Distance(0, 0, vx, vy)/10000.0;
+			EwpnH::getWeapon()->doAutoRotate();
+		}
+	}
+}
+
+void do_ewpnmakedirectional()
+{
+	if(EwpnH::loadWeapon(ri->lwpn, "eweapon->MakeDirectional") == SH::_NoError)
+	{
+		if (EwpnH::getWeapon()->angular)
+		{
+			EwpnH::getWeapon()->dir = NORMAL_DIR(AngleToDir(WrapAngle(EwpnH::getWeapon()->angle)));
+			EwpnH::getWeapon()->angular = false;
+			EwpnH::getWeapon()->doAutoRotate(true);
+		}
+	}
+}
+
 void do_lwpnusesprite(const bool v)
 {
 	int32_t ID = SH::get_arg(sarg1, v) / 10000;
@@ -21753,6 +23092,17 @@ void FFScript::do_loadbottleshop(const bool v)
 		ri->bottleshopref = 0;
 	}
 	else ri->bottleshopref = ID+1;
+}
+void FFScript::do_loadgenericdata(const bool v)
+{
+	int32_t ID = SH::get_arg(sarg1, v) / 10000;
+	
+	if ( ID < 1 || ID > NUMSCRIPTSGENERIC )
+	{
+		Z_scripterrlog("Invalid GenericData ID passed to Game->LoadGenericData(): %d\n", ID);
+		ri->genericdataref = 0;
+	}
+	else ri->genericdataref = ID;
 }
 
 void FFScript::do_getDMapData_dmapname(const bool v)
@@ -23207,6 +24557,10 @@ bool FFScript::warp_player(int32_t warpType, int32_t dmapID, int32_t scrID, int3
 			doWarpEffect(warpEffect, true);
 			//zprint("FFCore.warp_player reached line: %d \n", 15973);
 			int32_t c = DMaps[currdmap].color;
+			if(currdmap != dmapID)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+			if(dlevel != DMaps[dmapID].level)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 			currdmap = dmapID;
 			dlevel = DMaps[currdmap].level;
 			currmap = DMaps[currdmap].map;
@@ -23298,6 +24652,10 @@ bool FFScript::warp_player(int32_t warpType, int32_t dmapID, int32_t scrID, int3
 			if ( !(warpFlags&warpFlagDONTKILLSOUNDS) ) kill_sfx();
 			sfx(warpSound);
 			blackscr(30,false);
+			if(currdmap != dmapID)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+			if(dlevel != DMaps[dmapID].level)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 			currdmap = dmapID;
 			dlevel=DMaps[currdmap].level;
 			currmap=DMaps[currdmap].map;
@@ -23433,6 +24791,10 @@ bool FFScript::warp_player(int32_t warpType, int32_t dmapID, int32_t scrID, int3
 			
 			
 			Hero.scrollscr(Hero.sdir, scrID+DMaps[dmapID].xoff, dmapID);
+			if(currdmap != dmapID)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+			if(dlevel != DMaps[dmapID].level)
+				timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 			dlevel = DMaps[dmapID].level; //Fix dlevel and draw the map (end hack). -Z
 			
 			Hero.reset_hookshot();
@@ -23509,14 +24871,17 @@ bool FFScript::warp_player(int32_t warpType, int32_t dmapID, int32_t scrID, int3
 	loadside=Hero.dir^1;
 	whistleclk=-1;
 		
-	if((int32_t)Hero.z>0 && isSideViewHero())
+	if(((int32_t)Hero.z>0 || (int32_t)Hero.fakez>0) && isSideViewHero())
 	{
 		Hero.y-=Hero.z;
+		Hero.y-=Hero.fakez;
 		Hero.z=0;
+		Hero.fakez=0;
 	}
 	else if(!isSideViewHero())
 	{
 		Hero.fall=0;
+		Hero.fakefall=0;
 	}
 		
 	// If warping between top-down and sideview screens,
@@ -23588,7 +24953,7 @@ bool FFScript::warp_player(int32_t warpType, int32_t dmapID, int32_t scrID, int3
 						"Insta-Warp");
 						
 	eventlog_mapflags();
-	if ( !(warpFlags&warpFlagDONTRESTARTDMAPSCRIPT) || olddmap != currdmap) //Changed DMaps, or needs to reset the script
+	if (((warpFlags&warpFlagDONTRESTARTDMAPSCRIPT) != 0) == (get_bit(quest_rules, qr_SCRIPT_WARPS_DMAP_SCRIPT_TOGGLE) != 0)|| olddmap != currdmap) //Changed DMaps, or needs to reset the script
 	{
 		FFScript::deallocateAllArrays(SCRIPT_DMAP, olddmap);
 		initZScriptDMapScripts();
@@ -24463,6 +25828,35 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 		}
 		break;
 		
+		case SCRIPT_GENERIC:
+		{
+			user_genscript& scr = user_scripts[script];
+			stack = &scr.stack;
+			ri = &scr.ri;
+			ri->genericdataref = script;
+			curscript = genericscripts[script];
+			if(!scr.initialized)
+			{
+				scr.initialized = true;
+				memcpy(ri->d, scr.initd, 8 * sizeof(int32_t));
+			}
+		}
+		break;
+		
+		case SCRIPT_GENERIC_FROZEN:
+		{
+			ri = genericActiveData.back();
+			ri->genericdataref = script;
+			curscript = genericscripts[script];
+			stack = generic_active_stack.back();
+			if(!gen_active_initialized)
+			{
+				gen_active_initialized = true;
+				memcpy(ri->d, user_scripts[script].initd, 8 * sizeof(int32_t));
+			}
+		}
+		break;
+		
 		case SCRIPT_PLAYER:
 		{
 			ri = &playerScriptData;
@@ -24647,7 +26041,8 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 		#endif
 	}
 	
-	while(scommand != 0xFFFF && scommand != WAITFRAME && scommand != WAITDRAW)
+	while(scommand != 0xFFFF && scommand != WAITFRAME
+		&& scommand != WAITDRAW && scommand != WAITTO)
 	{
 		numInstructions++;
 		if(numInstructions==hangcount) // No need to check frequently
@@ -24722,6 +26117,8 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 				scommand = 0xFFFF;
 				break;
 				
+			case NOP: //No Operation. Do nothing. -Em
+				break;
 			case GOTO:
 			{
 				uint8_t invalid = 0;
@@ -25281,6 +26678,14 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 			case TANR:
 				do_trig(false, 2);
 				break;
+				
+			case DEGTORAD:
+				do_degtorad();
+				break;
+				
+			case RADTODEG:
+				do_radtodeg();
+				break;
 			
 			case STRINGLENGTH:
 				FFCore.do_strlen(false);
@@ -25352,6 +26757,7 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 			case GETLWEAPONSCRIPT:	FFCore.do_getlweaponscript(); break;
 			case GETEWEAPONSCRIPT:	FFCore.do_geteweaponscript(); break;
 			case GETHEROSCRIPT:	FFCore.do_getheroscript(); break;
+			case GETGENERICSCRIPT:	FFCore.do_getgenericscript(); break;
 			case GETGLOBALSCRIPT:	FFCore.do_getglobalscript(); break;
 			case GETDMAPSCRIPT:	FFCore.do_getdmapscript(); break;
 			case GETSCREENSCRIPT:	FFCore.do_getscreenscript(); break;
@@ -26147,6 +27553,22 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 				do_isvalidewpn();
 				break;
 				
+			case LWPNMAKEANGULAR:
+				do_lwpnmakeangular();
+				break;
+				
+			case EWPNMAKEANGULAR:
+				do_ewpnmakeangular();
+				break;
+			
+			case LWPNMAKEDIRECTIONAL:
+				do_lwpnmakedirectional();
+				break;
+				
+			case EWPNMAKEDIRECTIONAL:
+				do_ewpnmakedirectional();
+				break;
+				
 			case LWPNUSESPRITER:
 				do_lwpnusesprite(false);
 				break;
@@ -26853,6 +28275,12 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 				//}
 				break;
 				
+			}
+			
+			case KILLPLAYER:
+			{
+				Hero.kill(get_register(sarg1));
+				break;
 			}
 			
 			case LINKEXPLODER:
@@ -27859,9 +29287,14 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 				}
 				break;
 			//}
-			
-			case NOP: //No Operation. Do nothing. -V
+			case LOADGENERICDATA:
+				FFCore.do_loadgenericdata(false); break;
+			case RUNGENFRZSCR:
+			{
+				bool r = FFCore.runGenericFrozenEngine(word(ri->genericdataref));
+				set_register(sarg1, r ? 10000L : 0L);
 				break;
+			}
 			
 			default:
 			{
@@ -27925,6 +29358,63 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 			scommand = curscript->zasm[ri->pc].command;
 			sarg1 = curscript->zasm[ri->pc].arg1;
 			sarg2 = curscript->zasm[ri->pc].arg2;
+		}
+		if(scommand == WAITDRAW)
+		{
+			switch(type)
+			{
+				case SCRIPT_GENERIC:
+				case SCRIPT_GENERIC_FROZEN: //ignore waitdraws
+					Z_scripterrlog("'Waitdraw()' is invalid in generic scripts, will be ignored\n");
+					scommand = NOP;
+					break;
+			}
+		}
+		else if(scommand == WAITTO)
+		{
+			switch(type)
+			{
+				case SCRIPT_GENERIC_FROZEN:
+					//ignore, no warn/error
+					scommand = NOP;
+					break;
+				case SCRIPT_GENERIC:
+				{
+					user_genscript& scr = user_scripts[script];
+					int32_t target = get_register(sarg1)/10000L;
+					bool atleast = get_register(sarg2)!=0;
+					if(unsigned(target) > SCR_TIMING_END_FRAME)
+					{
+						Z_scripterrlog("Invalid value '%d' provided to 'WaitTo()'\n", target);
+						scommand = NOP;
+						break;
+					}
+					if(genscript_timing == target ||
+						(atleast && genscript_timing < target))
+					{
+						//Already that time, skip the command
+						scommand = NOP;
+						break;
+					}
+					scr.waituntil = scr_timing(target);
+					scr.wait_atleast = atleast;
+					break;
+				}
+				default:
+					Z_scripterrlog("'WaitTo()' is only valid in 'generic' scripts!\n");
+					scommand = NOP;
+					break;
+			}
+		}
+		else if(scommand == WAITFRAME)
+		{
+			switch(type)
+			{
+				case SCRIPT_GENERIC:
+					user_scripts[script].waituntil = SCR_TIMING_START_FRAME;
+					user_scripts[script].wait_atleast = false;
+					break;
+			}
 		}
 	}
 	
@@ -28066,7 +29556,12 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 				combo_waitdraw[pos] |= (1<<l);
 				break;
 			}
-		
+			
+			case SCRIPT_GENERIC:
+			case SCRIPT_GENERIC_FROZEN:
+				//No Waitdraw
+				break;
+			
 			default:
 				Z_scripterrlog("Waitdraw cannot be used in script type: %s\n", script_types[type]);
 				break;
@@ -28085,6 +29580,16 @@ int32_t run_script(const byte type, const word script, const int32_t i)
 			
 		case SCRIPT_GLOBAL:
 			g_doscript &= ~(1<<i);
+			FFScript::deallocateAllArrays(type, i);
+			break;
+		
+		case SCRIPT_GENERIC:
+			user_scripts[script].quit();
+			FFScript::deallocateAllArrays(type, i);
+			break;
+		
+		case SCRIPT_GENERIC_FROZEN:
+			gen_active_doscript = 0;
 			FFScript::deallocateAllArrays(type, i);
 			break;
 		
@@ -30456,6 +31961,7 @@ FFScript::FFScript()
 */
 void FFScript::init()
 {
+	countGenScripts();
 	for ( int32_t q = 0; q < wexLast; q++ ) warpex[q] = 0;
 	print_ZASM = zasm_debugger;
 	if ( zasm_debugger )
@@ -30681,8 +32187,6 @@ bool ZModule::init(bool d) //bool default
 	memset(moduledata.datafiles, 0, sizeof(moduledata.datafiles));
 	memset(moduledata.enem_type_names, 0, sizeof(moduledata.enem_type_names));
 	memset(moduledata.enem_anim_type_names, 0, sizeof(moduledata.enem_anim_type_names));
-	memset(moduledata.combo_type_names, 0, sizeof(moduledata.combo_type_names));
-	memset(moduledata.combo_flag_names, 0, sizeof(moduledata.combo_flag_names));
 	
 	memset(moduledata.startingdmap, 0, sizeof(moduledata.startingdmap));
 	memset(moduledata.startingscreen, 0, sizeof(moduledata.startingscreen));
@@ -30694,7 +32198,6 @@ bool ZModule::init(bool d) //bool default
 	memset(moduledata.enemy_weapon_names, 0, sizeof(moduledata.enemy_weapon_names));
 	memset(moduledata.enemy_weapon_names, 0, sizeof(moduledata.enemy_scriptweaponweapon_names));
 	memset(moduledata.player_weapon_names, 0, sizeof(moduledata.player_weapon_names));
-	memset(moduledata.counter_names, 0, sizeof(moduledata.counter_names));
 	memset(moduledata.delete_quest_data_on_wingame, 0, sizeof(moduledata.delete_quest_data_on_wingame));
 	memset(moduledata.base_NSF_file, 0, sizeof(moduledata.base_NSF_file));
 	memset(moduledata.copyright_strings, 0, sizeof(moduledata.copyright_strings));
@@ -30972,22 +32475,6 @@ bool ZModule::init(bool d) //bool default
 			"crCUSTOM14","crCUSTOM15","crCUSTOM16","crCUSTOM17","crCUSTOM18","crCUSTOM19",
 			"crCUSTOM20","crCUSTOM21","crCUSTOM22","crCUSTOM23","crCUSTOM24","crCUSTOM25"
 		};
-
-		static const char counter_default_names[33][255]=
-		{
-			"None","Life","Rupees", "Bombs","Arrows","Magic",
-			"Keys","Super Bombs","Custom 1","Custom 2","Custom 3",
-			"Custom 4","Custom 5","Custom 6","Custom 7","Custom 8",
-			"Custom 9","Custom 10","Custom 11","Custom 12",
-			"Custom 13","Custom 14","Custom 15","Custom 16","Custom 17",
-			"Custom 18","Custom 19","Custom 20","Custom 21","Custom 22"
-			"Custom 23","Custom 24","Custom 25"	
-		};
-		for ( int32_t q = 0; q < 33; q++ )
-		{
-			strcpy(moduledata.counter_names[q],zc_get_config("COUNTERS",counter_cats[q],counter_default_names[q]));
-			//al_trace("Counter ID %d is: %s\n", q, moduledata.counter_names[q]);
-		}
 		
 		al_trace("Module Title: %s\n", moduledata.moduletitle);
 		al_trace("Module Author: %s\n", moduledata.moduleauthor);
@@ -31263,10 +32750,7 @@ void FFScript::runF6Engine()
 		if(globalscripts[GLOBAL_SCRIPT_F6]->valid())
 		{
 			//Incase this was called mid-another script, store ref data
-			int32_t tsarg1 = sarg1;
-			int32_t tsarg2 = sarg2;
-			refInfo *tri = ri;
-			script_data *tcurscript = curscript;
+			push_ri();
 			//
 			clear_bitmap(f6_menu_buf);
 			blit(framebuf, f6_menu_buf, 0, 0, 0, 0, 256, 224);
@@ -31307,10 +32791,7 @@ void FFScript::runF6Engine()
 				memcpy(tempblackpal, RAMpal, PAL_SIZE*sizeof(RGB));
 			}
 			//Restore script refinfo
-			sarg1 = tsarg1;
-			sarg2 = tsarg2;
-			ri = tri;
-			curscript = tcurscript;
+			pop_ri();
 			//
 		}
 		if(!Quit)
@@ -31377,6 +32858,64 @@ void FFScript::runOnLaunchEngine()
 	script_drawing_commands.Clear();
 	GameFlags &= ~GAMEFLAG_SCRIPTMENU_ACTIVE;
 }
+bool FFScript::runGenericFrozenEngine(const word script)
+{
+	static int32_t local_i = 0;
+	if(script < 1 || script >= NUMSCRIPTSGENERIC) return false;
+	if(!genericscripts[script]->valid()) return false; //No script to run
+	//Store script refinfo
+	push_ri();
+	refInfo local_ri;
+	int32_t local_stack[MAX_SCRIPT_REGISTERS];
+	local_ri.Clear();
+	memset(local_stack, 0, sizeof(local_stack));
+	genericActiveData.push_back(&local_ri);
+	generic_active_stack.push_back(&local_stack);
+	bool tmp_init = gen_active_initialized;
+	bool tmp_doscript = gen_active_doscript;
+	gen_active_doscript = true;
+	gen_active_initialized = false;
+	//run script
+	uint32_t fl = GameFlags & GAMEFLAG_SCRIPTMENU_ACTIVE;
+	BITMAP* tmpbuf = script_menu_buf;
+	if(fl)
+	{
+		script_menu_buf = create_bitmap_ex(8,256,224);
+	}
+	clear_bitmap(script_menu_buf);
+	blit(framebuf, script_menu_buf, 0, 0, 0, 0, 256, 224);
+	GameFlags |= GAMEFLAG_SCRIPTMENU_ACTIVE;
+	++local_i;
+	while(gen_active_doscript && !Quit)
+	{
+		script_drawing_commands.Clear();
+		load_control_state();
+		ZScriptVersion::RunScript(SCRIPT_GENERIC_FROZEN, script, local_i);
+		//Draw
+		clear_bitmap(framebuf);
+		if( !FFCore.system_suspend[susptCOMBOANIM] ) animate_combos();
+		doScriptMenuDraws();
+		//
+		advanceframe(true);
+	}
+	--local_i;
+	gen_active_doscript = tmp_doscript;
+	gen_active_initialized = tmp_init;
+	//clear
+	GameFlags &= ~GAMEFLAG_SCRIPTMENU_ACTIVE;
+	if(fl)
+	{
+		GameFlags |= fl;
+		destroy_bitmap(script_menu_buf);
+		script_menu_buf = tmpbuf;
+	}
+	genericActiveData.pop_back();
+	generic_active_stack.pop_back();
+	//Restore script refinfo
+	pop_ri();
+	return true;
+}
+
 bool FFScript::runActiveSubscreenScriptEngine()
 {
 	word activesubscript = DMaps[currdmap].active_sub_script;
@@ -31500,10 +33039,7 @@ void FFScript::runOnSaveEngine()
 {
 	if(globalscripts[GLOBAL_SCRIPT_ONSAVE]->valid())
 	{
-		int32_t tsarg1 = sarg1;
-		int32_t tsarg2 = sarg2;
-		refInfo *tri = ri;
-		script_data *tcurscript = curscript;
+		push_ri();
 		//Prevent getting here via Quit from causing a forced-script-quit after 1000 commands!
 		int32_t tQuit = Quit;
 		Quit = 0;
@@ -31511,10 +33047,7 @@ void FFScript::runOnSaveEngine()
 		initZScriptGlobalScript(GLOBAL_SCRIPT_ONSAVE);
 		ZScriptVersion::RunScript(SCRIPT_GLOBAL, GLOBAL_SCRIPT_ONSAVE, GLOBAL_SCRIPT_ONSAVE);
 		//
-		sarg1 = tsarg1;
-		sarg2 = tsarg2;
-		ri = tri;
-		curscript = tcurscript;
+		pop_ri();
 		Quit = tQuit;
 	}
 }
@@ -32633,6 +34166,24 @@ void FFScript::do_getcomboscript()
 	for(int32_t q = 0; q < NUMSCRIPTSCOMBODATA; q++)
 	{
 		if(!(strcmp(the_string.c_str(), comboscriptmap[q].scriptname.c_str())))
+		{
+			script_num = q+1;
+			break;
+		}
+	}
+	set_register(sarg1, (script_num * 10000));
+}
+
+void FFScript::do_getgenericscript()
+{
+	int32_t arrayptr = get_register(sarg1) / 10000;
+	string the_string;
+	int32_t script_num = -1;
+	FFCore.getString(arrayptr, the_string, 256); //What is the max length of a script identifier?
+	
+	for(int32_t q = 0; q < NUMSCRIPTSGENERIC; q++)
+	{
+		if(!(strcmp(the_string.c_str(), genericmap[q].scriptname.c_str())))
 		{
 			script_num = q+1;
 			break;
@@ -34438,6 +35989,17 @@ script_command ZASMcommands[NUMCOMMANDS+1]=
 	{ "FILEOWN",         0,   0,   0,   0},
 	{ "DIRECTORYOWN",         0,   0,   0,   0},
 	{ "RNGOWN",         0,   0,   0,   0},
+	{ "LOADGENERICDATA",         1,   0,   0,   0},
+	{ "RUNGENFRZSCR",         1,   0,   0,   0},
+	{ "WAITTO",			   2,   0,   0,   0},
+	{ "GETGENERICSCRIPT",                1,   0,   0,   0},
+	{ "KILLPLAYER",                1,   0,   0,   0},
+	{ "DEGTORAD",                2,   0,   0,   0},
+	{ "RADTODEG",                2,   0,   0,   0},
+	{ "LWPNMAKEANGULAR",      1,   0,   0,   0},
+	{ "EWPNMAKEANGULAR",      1,   0,   0,   0},
+	{ "LWPNMAKEDIRECTIONAL",      1,   0,   0,   0},
+	{ "EWPNMAKEDIRECTIONAL",      1,   0,   0,   0},
 	{ "",                    0,   0,   0,   0}
 };
 
@@ -35703,8 +37265,60 @@ script_variable ZASMVars[]=
 	{ "GAMEMAXCHEAT",  GAMEMAXCHEAT,  0, 0 },
 	{ "SHOWNMSG",  SHOWNMSG,  0, 0 },
 	{ "COMBODTRIGGERBUTTON",  COMBODTRIGGERBUTTON,  0, 0 },
+	{ "REFGENERICDATA", REFGENERICDATA, 0, 0 },
+	{ "GENDATARUNNING", GENDATARUNNING, 0, 0 },
+	{ "GENDATASIZE", GENDATASIZE, 0, 0 },
+	{ "GENDATAEXITSTATE", GENDATAEXITSTATE, 0, 0 },
+	{ "GENDATADATA", GENDATADATA, 0, 0 },
+	{ "GENDATAINITD", GENDATAINITD, 0, 0 },
+	{ "GENDATARELOADSTATE", GENDATARELOADSTATE, 0, 0 },
+	{ "COMBODCSET2FLAGS", COMBODCSET2FLAGS, 0, 0 },
+	{ "HEROIMMORTAL", HEROIMMORTAL, 0, 0 },
+	{ "NPCCANFLICKER", NPCCANFLICKER, 0, 0 },
+	{ "NPCDROWNCLK", NPCDROWNCLK, 0, 0 },
+	{ "NPCDROWNCMB", NPCDROWNCMB, 0, 0 },
+	{ "ITEMDROWNCLK", ITEMDROWNCLK, 0, 0 },
+	{ "ITEMDROWNCMB", ITEMDROWNCMB, 0, 0 },
+	{ "LWPNDROWNCLK", LWPNDROWNCLK, 0, 0 },
+	{ "LWPNDROWNCMB", LWPNDROWNCMB, 0, 0 },
+	{ "EWPNDROWNCLK", EWPNDROWNCLK, 0, 0 },
+	{ "EWPNDROWNCMB", EWPNDROWNCMB, 0, 0 },
+	{ "HERODROWNCLK", HERODROWNCLK, 0, 0 },
+	{ "HERODROWNCMB", HERODROWNCMB, 0, 0 },
+	{ "NPCFAKEZ", NPCFAKEZ, 0, 0 },
+	{ "ITEMFAKEZ", ITEMFAKEZ, 0, 0 },
+	{ "LWPNFAKEZ", LWPNFAKEZ, 0, 0 },
+	{ "EWPNFAKEZ", EWPNFAKEZ, 0, 0 },
+	{ "HEROFAKEZ", HEROFAKEZ, 0, 0 },
+	{ "NPCFAKEJUMP", NPCFAKEJUMP, 0, 0 },
+	{ "ITEMFAKEJUMP", ITEMFAKEJUMP, 0, 0 },
+	{ "LWPNFAKEJUMP", LWPNFAKEJUMP, 0, 0 },
+	{ "EWPNFAKEJUMP", EWPNFAKEJUMP, 0, 0 },
+	{ "HEROFAKEJUMP", HEROFAKEJUMP, 0, 0 },
+	{ "HEROSHADOWXOFS", HEROSHADOWXOFS, 0, 0 },
+	{ "HEROSHADOWYOFS", HEROSHADOWYOFS, 0, 0 },
+	{ "NPCSHADOWXOFS", NPCSHADOWXOFS, 0, 0 },
+	{ "NPCSHADOWYOFS", NPCSHADOWYOFS, 0, 0 },
+	{ "ITEMSHADOWXOFS", ITEMSHADOWXOFS, 0, 0 },
+	{ "ITEMSHADOWYOFS", ITEMSHADOWYOFS, 0, 0 },
+	{ "LWPNSHADOWXOFS", LWPNSHADOWXOFS, 0, 0 },
+	{ "LWPNSHADOWYOFS", LWPNSHADOWYOFS, 0, 0 },
+	{ "EWPNSHADOWXOFS", EWPNSHADOWXOFS, 0, 0 },
+	{ "EWPNSHADOWYOFS", EWPNSHADOWYOFS, 0, 0 },
+	{ "LWPNDEGANGLE", LWPNDEGANGLE, 0, 0 },
+	{ "EWPNDEGANGLE", EWPNDEGANGLE, 0, 0 },
+	{ "LWPNVX", LWPNVX, 0, 0 },
+	{ "LWPNVY", LWPNVY, 0, 0 },
+	{ "EWPNVX", EWPNVX, 0, 0 },
+	{ "EWPNVY", EWPNVY, 0, 0 },
+	{ "LWPNAUTOROTATE", LWPNAUTOROTATE, 0, 0 },
+	{ "EWPNAUTOROTATE", EWPNAUTOROTATE, 0, 0 },
+	{ "IDATACOSTCOUNTER2", IDATACOSTCOUNTER2, 0, 0 },
+	{ "IDATAMAGICTIMER2", IDATAMAGICTIMER2, 0, 0 },
+	{ "IDATACOST2", IDATACOST2, 0, 0 },
+	{ "IDATAVALIDATE2", IDATAVALIDATE2, 0, 0 },
 	
-	{ " ",                       -1,             0,             0 }
+	{ " ", -1, 0, 0 }
 };
 
 
@@ -36488,6 +38102,26 @@ void FFScript::TraceScriptIDs(bool zasm_console)
 					printf("combodata script %u (%s): ", curScriptNum, comboscriptmap[curScriptNum-1].scriptname.c_str());
 				#endif  
 			break;
+			case SCRIPT_GENERIC:
+				al_trace("Generic Script %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());
+				#ifdef _WIN32
+				if ( cond ) {console.cprintf((CConsoleLoggerEx::COLOR_GREEN | CConsoleLoggerEx::COLOR_INTENSITY | 
+					CConsoleLoggerEx::COLOR_BACKGROUND_BLACK),"Generic Script %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());}
+				#else //Unix
+					std::cout << "Z_scripterrlog Test\n" << std::endl;
+					printf("Generic Script %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());
+				#endif  
+				break;
+			case SCRIPT_GENERIC_FROZEN:
+				al_trace("Generic Script (FRZ) %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());
+				#ifdef _WIN32
+				if ( cond ) {console.cprintf((CConsoleLoggerEx::COLOR_GREEN | CConsoleLoggerEx::COLOR_INTENSITY | 
+					CConsoleLoggerEx::COLOR_BACKGROUND_BLACK),"Generic Script (FRZ) %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());}
+				#else //Unix
+					std::cout << "Z_scripterrlog Test\n" << std::endl;
+					printf("Generic Script (FRZ) %u (%s): ", curScriptNum, genericmap[curScriptNum-1].scriptname.c_str());
+				#endif  
+				break;
 		}
 	}
 }
@@ -38275,7 +39909,7 @@ void FFScript::write_items(PACKFILE *f, int32_t vers_id)
 				Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",6);
 			}
 			
-			if(!p_putc(itemsbuf[i].misc,f))
+			if(!p_putc(itemsbuf[i].misc_flags,f))
 			{
 				Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",7);
 			}
@@ -38441,7 +40075,7 @@ void FFScript::write_items(PACKFILE *f, int32_t vers_id)
 				Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",38);
 			}
 			
-			if(!p_putc(itemsbuf[i].magic,f))
+			if(!p_putc(itemsbuf[i].cost_amount[0],f))
 			{
 				Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",39);
 			}
@@ -38611,7 +40245,7 @@ void FFScript::write_items(PACKFILE *f, int32_t vers_id)
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",73);
 		}
-		if(!p_iputl(itemsbuf[i].magiccosttimer,f))
+		if(!p_iputl(itemsbuf[i].magiccosttimer[0],f))
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",74);
 		}
@@ -38652,7 +40286,7 @@ void FFScript::write_items(PACKFILE *f, int32_t vers_id)
 			Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",83);
 		}
 		
-		if(!p_putc(itemsbuf[i].cost_counter,f))
+		if(!p_putc(itemsbuf[i].cost_counter[0],f))
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to read ITEM NODE: %d",84);
 		}
@@ -38712,7 +40346,7 @@ void FFScript::read_items(PACKFILE *f, int32_t vers_id)
 				Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",6);
 			}
 			
-			if(!p_getc(&itemsbuf[i].misc,f,true))
+			if(!p_getc(&itemsbuf[i].misc_flags,f,true))
 			{
 				Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",7);
 			}
@@ -38878,7 +40512,7 @@ void FFScript::read_items(PACKFILE *f, int32_t vers_id)
 				Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",38);
 			}
 			
-			if(!p_getc(&itemsbuf[i].magic,f,true))
+			if(!p_getc(&itemsbuf[i].cost_amount[0],f,true))
 			{
 				Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",39);
 			}
@@ -39048,7 +40682,7 @@ void FFScript::read_items(PACKFILE *f, int32_t vers_id)
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",73);
 		}
-		if(!p_igetl(&itemsbuf[i].magiccosttimer,f,true))
+		if(!p_igetl(&itemsbuf[i].magiccosttimer[0],f,true))
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",74);
 		}
@@ -39089,7 +40723,7 @@ void FFScript::read_items(PACKFILE *f, int32_t vers_id)
 			Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",83);
 		}
 		
-		if(!p_getc(&itemsbuf[i].cost_counter,f,true))
+		if(!p_getc(&itemsbuf[i].cost_counter[0],f,true))
 		{
 			Z_scripterrlog("do_savegamestructs FAILED to write ITEM NODE: %d",84);
 		}

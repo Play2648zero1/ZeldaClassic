@@ -17,8 +17,8 @@
 The following documents the changes, and expansions to the ZScript language in ZQuest/ZC 
 	versions 2.54, and 2.55. 
 	
-Document for: 2.55, Alpha 105
-Document Revision: 3rd April, 2022
+Document for: 2.55, Alpha 107
+Document Revision: 20th April, 2022
 
 
  __           _   _                 
@@ -550,6 +550,9 @@ untyped : A special datatype that can be cast to and from any other type.
 	bottleshopdata :
 		Object type for modifying bottle shop type data
 	
+	genericdata :
+		Object type for managing 'generic scripts'
+	
 	//Planned/Incomplete
 	warpringdata : t/b/a
 		(Planned) Access to all Warpring Editor data.
@@ -858,8 +861,6 @@ TYPE IDENTIFIER[SIZE] = { INITILISERS };
 	SIZE may be any constant expression.
 
 TYPE IDENTIFIER[] = { INITIALISERS };
-TYPE IDENTIFIER[A,B]; //Size is A*B
-TYPE IDENTIFIER[A,B] = { INITILISERS }; //Size is A*B
 
 char32 arrays may be initialised with a string:
 
@@ -950,6 +951,22 @@ You may now use escape sequences in a SINGLECHAR type:
 	
 	If no type is specified, the array will default to 'untyped'.
 
+///////////////////////
+/// Binary Literals ///
+///////////////////////
+
+Binary numbers may be specified as '01010101b', or '0b01010101'
+	(both representing '84' in this example).
+
+//////////////////////
+///  Hex Literals  ///
+//////////////////////
+
+Hexadecimal numbers may be specified, prefixed with '0x'.
+
+Ex. 0x22 == 34
+    0x4A == 74
+
 //////////////////////
 /// Octal Literals ///
 //////////////////////
@@ -958,7 +975,11 @@ Similarly to hex and binary literals, you can now specify numbers using octal li
 To specify an octal literal, the digits of the number must be 0-7, and the number must have an 'o' appended.
 
 Ex: 17o == 15
-Ex: 47o == 39	
+Ex: 47o == 39
+
+Prefixing with '0o' is a valid alternative
+
+Ex: 0o21 ==	17
 
 /////////////////////
 /// Long Literals ///
@@ -972,7 +993,9 @@ Long literals:
 	0xFL (== 0.0015, == 15L) //Hex long
 	101010Lb (== 0.0042, == 42L) //Binary long
 	00011bL (== 0.0003, == 3L) //Binary long
+	0b01011L (== 0.0011, == 11L) //Binary long
 	17oL, 17Lo (== 0.0015, == 15L) //Octal long
+	0o27L (== 0.0023, == 23L) //Octal long
 
  _______                  ___________            __                               
  \      \   ______  _  __ \_   _____/___ _____ _/  |_ __ _________   ____   ______
@@ -1195,12 +1218,12 @@ of iterations is known at compile-time.
 			case 1:
 			{
 				DoSomething(); 
-				break
+				break;
 			}
 			case SOME_CONST:
 			{
 				DoSomethingElse();
-				break:
+				break;
 			}
 			case SOME_CONST+(10*2)
 			{
@@ -1211,6 +1234,42 @@ of iterations is known at compile-time.
 			{
 				DoDefault();
 				break;
+			}
+		}
+
+	--end example]
+	
+//////////////////////
+// Break - Continue //
+//////////////////////
+	
+	The 'break;' keyword will exit the current loop or switch statement it is inside.
+	As of 2.55, you can supply a number to break multiple loops at once:
+
+	[example-- 
+
+		for(int a = 0; a < 50; ++a)
+		{
+			for(int b = 0; b < 50; ++b)
+			{
+				if(b == 3)
+					break 2; //breaks out of BOTH loops
+			}
+		}
+
+	--end example]
+	
+	The 'continue;' keyword, rather than exiting a loop, skips back to the top of it.
+	'continue' ignores 'switch' statements, unlike 'break'.
+	
+	[example-- 
+
+		for(int a = 0; a < 50; ++a)
+		{
+			for(int b = 0; b < 50; ++b)
+			{
+				if(b == 3)
+					continue 2; //continues to the top of the 'a' loop
 			}
 		}
 
@@ -2215,21 +2274,53 @@ Waitdraw Support:	t/b/a
 * coordinates for a combo running a script.
 
 
+///////////////////////
+/// Generic Scripts ///
+///////////////////////
+
+TOKEN(s):		generic script
+POINTER: 		genericdata
+InitD:			(Not *yet*)
+InitD Labels:	No
+Multiple Frames:	Yes
+Waitdraw Support:	Special
+
+A generic script can be run in multiple different ways.
+
+Firstly, it can run 'passively':
+	Once a generic script starts running passively, there are 39 different timings throughout each
+		frame that they can run. They will first run at the first available timing after being
+		launched; after 'Waitframe()', they return to the "Start of Frame" timing.
+	The 'WaitTo' function can be used to go to each specific timing, similarly to how
+		'Waitdraw' works in other scripts.
+	The passive running of a generic script is also affected by it's 'ExitState' and 'ReloadState'
+		arrays, which can exit the script or restart it from the beginning when certain conditions
+		are met (such as changing screens/dmaps, continuing, reloading, ...)
+
+Secondly, it can run 'frozen':
+	A 'frozen' run works similar to the dmapdata 'ActiveSubscreen' slot, or global onF6 or onLaunch.
+	The script will run frame after frame, with NO other part of the engine running (aside from
+		combo animation, which will run unless 'Game->Suspend[]' is used) until the script
+		reaches end-of-scope or exits.
+	While running frozen, a still image of the screen before the script started will be
+		drawn to layer 0 each frame; nothing else other than script draws is drawn.
+	A generic script is run frozen using the 'genericdata->RunFrozen()' function.
+
 /////////////////////////
 /// Subscreen Scripts ///
 /////////////////////////
-
-NOT IMPLEMENTED!
-
-TOKEN(s):		subscreendata script
-POINTER: 		subscreendata
-InitD:			Yes, [8]
-InitD Labels:		No
-InitA:			No
-Multiple Frames:	Yes
-Waitdraw Support:	Undecided
-
-To be added in a future spec. Will run on subscreens, set in the Subscreen Editor via a script subscreen object.
+//
+// NOT IMPLEMENTED!
+// 
+// TOKEN(s):		subscreendata script
+// POINTER: 		subscreendata
+// InitD:			Yes, [8]
+// InitD Labels:		No
+// InitA:			No
+// Multiple Frames:	Yes
+// Waitdraw Support:	Undecided
+// 
+// To be added in a future spec. Will run on subscreens, set in the Subscreen Editor via a script subscreen object.
 
 
 
@@ -2513,6 +2604,19 @@ Available annotations:
 //  Global  //
 //////////////								// Global
 
+void Waitframe();
+ * Pauses the script until the start of the next frame
+
+void Waitdraw();
+ * Attempts to wait until later in a frame. Script-type-dependant.
+
+void WaitTo(int script_timing, bool at_least);
+ * Only for passively-running 'Generic Scripts'
+ * Waits until the specified timing.
+ * If 'at_least' is true, any later timing will also end the wait.
+ * Use the 'SCR_TIMING_' constants from 'std_constants.zh' for 'script_timing'
+ * !WIP! Timings are subject to change
+
 float Distance(float x1, float y1, float x1, float y2)
  * Returns the distance between two sets of coordinates using Pythagoras' Theorem
  * The old version is now std::Distance(...)
@@ -2532,6 +2636,17 @@ long LongDistance(long x1, long y1, long x1, long y2, long scale)
    overflow Distance(), allowing negative coordinates.
  * Takes args only as long (e.g. 100L).
  * Retrns a vale as a long.
+ 
+float EngineDegtoRad(float deg)
+ * Converts Degrees to Radians. More accurate than the old std_functions DegtoRad.
+ * Because radians are mostly decimal and zscript can only have 4 decimals, there is very minor inaccuracies
+ * with this conversion that are not feasibly fixable; however, it is still more accurate than the old std.zh conversion function,
+ * where the old conversion could potentially be 2 entire degrees off at certain angles, while this version only loses about 0.0004 degrees of accuracy.
+ * In addition, casting between EngineDegtoRad and EngineRadtoDeg repeatedly will *not* lose additional precision with each call; only the first call will lose precision.
+ 
+float EngineRadtoDeg(float deg)
+ * Converts Radians to Degrees. More accurate than the old std_functions RadtoDeg.
+ * See above (EngineDegtoRad) for more details on how this is more accurate.
  
 void ArrayCopy(untyped *dest, untyped *src);
  * Copies the data from array src to array dest. 
@@ -2906,6 +3021,10 @@ int Game->GetUntypedScript("name");
 int Game->GetItemSpriteScript("name");
  * Returns the slot ID of the itemsprite script 'name'.
  * Returns -1 if there is no match.
+
+int Game->GetGenericScript("name");
+ * Returns the slot ID of the generic script 'name'.
+ * Returns -1 if there is no match.
  
 int Game->GetNPC("name");
  * Returns the ID of the npc 'name'.
@@ -3028,6 +3147,10 @@ shopdata LoadInfoShopData(int shop);
 randgen LoadRNG();
  * Opens a free random number generator and returns it.
  * Be sure to '->Free()' it when you are done with it!
+
+genericdata LoadGenericData(int scriptslot);
+ * Loads the 'genericdata' pointer referencing the specified generic script slot.
+ * Note that '0' is invalid.
 
 bool TypingMode;
  * If set true, all keyboard presses that would ordinarily perform an in-engine action are suppressed.
@@ -4281,6 +4404,17 @@ bool Switch(int effect);
  * Switch the player with this object
  * Use the 'SW_EFF_' constants from std_constants.zh for 'effect'
  * Returns true if it is successful
+ 
+int FakeZ;
+ * Current FakeZ position. This value is treated as a second, separate Z axis;
+ * Sprites will be offset upwards by this amount when drawn just like the Z axis and shadows will draw if applicable.
+ * However, the sprite's hitbox will not be moved upwards into the Z Axis; instead it will be moved upwards on the Y axis,
+ * mimicking how Vires and Pols Voice worked in the original Zelda.
+ * This value is affected by FakeJump instead of Jump.
+ 
+int FakeJump;			
+ * The current velocity on the FakeZ axis. This value is added to FakeZ every frame; and this value is decreased
+ * by the gravity value until it is lower than the terminal velocity value.
 
 /************************************************************************************************************/	
 
@@ -4414,6 +4548,37 @@ bool Switch(int effect);
  * Switch the player with this object
  * Use the 'SW_EFF_' constants from std_constants.zh for 'effect'
  * Returns true if it is successful
+ 
+int Vx;
+int Vy;
+ * Gets the weapons current velocity in that direction in Pixels.
+ * Setting either of these will make the weapon angular if it isn't already, and will set it's angle and speed to match it's new Vx and Vy.
+ 
+int DegAngle;
+ * Gets the weapon's current angle in degrees. Setting this will convert what you set to radians and set the weapon's angle to that.
+ 
+bool AutoRotate;
+ * If true, automatically rotates the weapon's sprite using 360 degree rotation to match either it's angle or direction.
+ * Assumes a right-facing sprite is set for the weapon.
+ 
+void MakeAngular();
+ * If angular isn't already set, sets angular to true and converts the weapon's direction to an angle.
+ * If angular is set, this does nothing.
+ 
+void MakeDirectional();
+ * If angular is set, converts the weapon's direction to the closest direction it can find to it's current angle in 8 directions, and unsets angular.
+ * If angular isn't set, this does nothing.
+ 
+int FakeZ;
+ * Current FakeZ position. This value is treated as a second, separate Z axis;
+ * Sprites will be offset upwards by this amount when drawn just like the Z axis and shadows will draw if applicable.
+ * However, the sprite's hitbox will not be moved upwards into the Z Axis; instead it will be moved upwards on the Y axis,
+ * mimicking how Vires and Pols Voice worked in the original Zelda.
+ * This value is affected by FakeJump instead of Jump.
+ 
+int FakeJump;			
+ * The current velocity on the FakeZ axis. This value is added to FakeZ every frame; and this value is decreased
+ * by the gravity value until it is lower than the terminal velocity value.
 
 ///////////////////////////
 ///  EWeapon  Specific  ///
@@ -4481,6 +4646,9 @@ float UID;
  * UIDs begin at 00000.0001 and overflow at 217478.3648. 
  *	Note: This allows for 2,147,483,647 unique npcs, per-session.
 
+bool InvFlicker;			
+ * If set false, the npc will neither flash, nor flicker when invincible. 
+
 int Frame;
  * The current frame of the npc's animation.
  
@@ -4546,6 +4714,10 @@ int SlideSpeed;
  * 4 by default
  * The number of pixels per frame this NPC will move during ENGINE knockback
  * Range: 0 to 255
+
+bool Immortal;
+ * If true, the enemy will not 'die' even if it has 0hp or is too far off-screen.
+ * '->Remove()' will still delete the npc.
 
 float Scale;
  * The scale factor for this sprited object. 
@@ -4844,6 +5016,7 @@ bool MoveFlags[3];
  * [0] == Obeys gravity (see ->Gravity)
  * [1] == Can fall in pitfalls
  * [2] == Can walk over pitfalls
+
  * Read-Write
  
 int LightRadius;
@@ -4868,6 +5041,17 @@ bool Switch(int effect);
  * Switch the player with this object
  * Use the 'SW_EFF_' constants from std_constants.zh for 'effect'
  * Returns true if it is successful
+ 
+int FakeZ;
+ * Current FakeZ position. This value is treated as a second, separate Z axis;
+ * Sprites will be offset upwards by this amount when drawn just like the Z axis and shadows will draw if applicable.
+ * However, the sprite's hitbox will not be moved upwards into the Z Axis; instead it will be moved upwards on the Y axis,
+ * mimicking how Vires and Pols Voice worked in the original Zelda.
+ * This value is affected by FakeJump instead of Jump.
+ 
+int FakeJump;			
+ * The current velocity on the FakeZ axis. This value is added to FakeZ every frame; and this value is decreased
+ * by the gravity value until it is lower than the terminal velocity value.
  
 /* The following commands are valid, but do not yet have in-engine use, */
 
@@ -4959,6 +5143,24 @@ bool IsWarping;
  * Note that as scripts generally do not run in warps, this may not ever return true
  *     during a given warp, depending on the warp type, QRs, script type, etc.
 
+int Immortal;
+ * If non-zero, the player will not die, even if their HP drops to 0.
+ * This will prevent effects such as bottled fairies from being triggered.
+ * If greater than 0, decrements by 1 each frame.
+ * If it becomes 0 while the player has 0 hp, it will act as though their HP just dropped
+ *     to 0 that frame, and normal effects such as fairies will trigger.
+
+int TileMod;
+ * Read-only
+ * The current *total* Player Tile Modifier.
+
+void Kill(bool bypass_revive);
+ * Kills the player. Their HP will be set to 0, and 'Immortal' will be bypassed.
+ * If 'bypass_revive' is true, bottles will not be checked for revival items,
+ *     and the normal single frame delay before death that is used for script-revival
+ *     will also be skipped.
+ * Otherwise, revival processes will occur as normal.
+
 float Scale;
  * The scale factor for this sprited object. 
  * A scale of 0 and a scale of 1 are identical.
@@ -5010,43 +5212,17 @@ bool SwitchCombo(int pos, int effect);
  * Switch the player with the given combo position
  * Use the 'SW_EFF_' constants from std_constants.zh for 'effect'
  * Returns true if it is successful
-
-**************************************************************
-
-untyped HitBy[10];
- * Stores the ID/UIDs of objects that hurt the Link this frame.
-
- * Indices:
-
- * The first four indices are for the *screen index* of objects:
-
- * Description		Index	Status
- * HIT_BY_NPC 		[0] 	In use by the engine. 
- * HIT_BY_EWEAPON 	[1] 	In use by the engine.
- * HIT_BY_LWEAPON 	[2]	Not used at this time.
- * HIT_BY_FFC 		[3] 	Not used at this time. 
-
- * The next four, are for the FFCore 'script' UIDs of objects:
-
- * Description		Index	Status
- * HIT_BY_NPC_UID 	[4] 	Not used at this time. 
- * HIT_BY_EWEAPON_UID 	[5] 	Not used at this time. 
- * HIT_BY_LWEAPON_UID 	[6]	Not used at this time.
- * HIT_BY_LWEAPON_UID 	[6]	Not used at this time.
- * HIT_BY_FFC_UID 	[7] 	Not used at this time. 
-
- * The last two, are reserved for special damage-object types. 
-
- * Description		Index	Status
- * HIT_BY_COMBO 	[8]	Not used at this time. 
- * HIT_BY_MAPFLAG 	[9] 	Not used at this time. 
-
- * These indices are uniform across all HitBy[] array members, for any datatype with that member. 
-
- * Some lweapons, notably some melee weapons such as swords (but not sword beams), and boomerangs
- * are not yet implemented in this mechanic. 
-
-**************************************************************
+ 
+int FakeZ;
+ * Current FakeZ position. This value is treated as a second, separate Z axis;
+ * Sprites will be offset upwards by this amount when drawn just like the Z axis and shadows will draw if applicable.
+ * However, the sprite's hitbox will not be moved upwards into the Z Axis; instead it will be moved upwards on the Y axis,
+ * mimicking how Vires and Pols Voice worked in the original Zelda.
+ * This value is affected by FakeJump instead of Jump.
+ 
+int FakeJump;			
+ * The current velocity on the FakeZ axis. This value is added to FakeZ every frame; and this value is decreased
+ * by the gravity value until it is lower than the terminal velocity value.
 
 int TotalDrawYOffset;
  * READ-ONLY
@@ -5258,6 +5434,43 @@ bool MoveFlags[2];
  * [0] == Obeys gravity (see ->Gravity)
  * [1] == Can fall in pitfalls
  * Read-Write
+ 
+**************************************************************
+
+untyped HitBy[10];
+ * Stores the ID/UIDs of objects that hurt the Link this frame.
+
+ * Indices:
+
+ * The first four indices are for the *screen index* of objects:
+
+ * Description		Index	Status
+ * HIT_BY_NPC 		[0] 	In use by the engine. 
+ * HIT_BY_EWEAPON 	[1] 	In use by the engine.
+ * HIT_BY_LWEAPON 	[2]	Not used at this time.
+ * HIT_BY_FFC 		[3] 	Not used at this time. 
+
+ * The next four, are for the FFCore 'script' UIDs of objects:
+
+ * Description		Index	Status
+ * HIT_BY_NPC_UID 	[4] 	Not used at this time. 
+ * HIT_BY_EWEAPON_UID 	[5] 	Not used at this time. 
+ * HIT_BY_LWEAPON_UID 	[6]	Not used at this time.
+ * HIT_BY_LWEAPON_UID 	[6]	Not used at this time.
+ * HIT_BY_FFC_UID 	[7] 	Not used at this time. 
+
+ * The last two, are reserved for special damage-object types. 
+
+ * Description		Index	Status
+ * HIT_BY_COMBO 	[8]	Not used at this time. 
+ * HIT_BY_MAPFLAG 	[9] 	Not used at this time. 
+
+ * These indices are uniform across all HitBy[] array members, for any datatype with that member. 
+
+ * Some lweapons, notably some melee weapons such as swords (but not sword beams), and boomerangs
+ * are not yet implemented in this mechanic. 
+
+**************************************************************
 
 /************************************************************************************************************/
 
@@ -5354,6 +5567,8 @@ bool KeepOld;
  
 bool Validate;
  * Corresponds to 'Only Validate Cost' on the Action tab of the item editor
+bool Validate2;
+ * Corresponds to 'Only Validate Cost2' on the Action tab of the item editor
 	
 bool RupeeCost;	
  * Corresponds to the 'Use Rupees Instead of Magic' option on the item editor 'Action' tab.
@@ -5387,6 +5602,9 @@ int MagicCostTimer;
 int CostTimer;
  * The number of frames between counter decrements, when using an item with a perpetual 
  * 	upkeep cost, such as Boots and Cane items.
+
+int CostTimer2;
+ * The number of frames between counter decrements, for the second cost.
 
 int UseSound;
  * The sound that may play when the item is used. When it plays differs depending on itemclass.
@@ -5422,10 +5640,16 @@ int Cost;
  * If the item runs for more than one frame, this amount will be decremented every n frames,
  * 	where n is the value of 'CostTimer'.
 
+int Cost2;
+ * The second cost of the item, in units.
+ * Charged in addition to the first cost.
+
 int CostCounter;
  * The counter to use when decrementing the item cost. The default is 'CR_MAGIC'.
- * Some item classes (e.g. Bombs) reduce a counter, whether this is set or not.
- * In the case that this is set on such an uitem, it acts as a secobdary cost.
+
+int CostCounter2;
+ * The counter to use when decrementing the second cost. The default is 'CR_NONE'.
+ * Charged in addition to the first cost.
 
 int DrawXOffset;
  * The horizontal draw offset of the item. 
@@ -6334,20 +6558,19 @@ int Flip;
  * The flip settings for the combo tile.
 	
 int Walk;
- * The walkability flags value. 
- * Walk flags are OR'd together using values of:
- *	
+ * The walkability flags value.
+ * ???
  
 int Effect;
  * The effect area flags value.
  * Uses the same binary values as 'Walk' above
 
-int CSet; 
-* The CSet values for the combo.
- * 	How is CSet2 stored?
+int CSet2; 
+ * The CSet2 Offset value for the combo
 
-int Foo; 
- * Unused.
+int CSet2Flags; 
+ * The CSet2 flags value
+ * ???
 
 int Frames; 
  * The number of frames of animation.
@@ -7455,6 +7678,50 @@ void DrawScreenComboIFlags	(int layer,
 // Transform() 
 // RenderTo(target, mode, args[])
 // RenderFrom(target, mode, args[])
+
+
+/////////////////////
+///  genericdata  ///
+///////////////////// genericdata
+
+bool RunFrozen();
+ * Attempts to run the given generic script in frozen mode.
+ * Returns true if successful, false otherwise.
+
+bool Running;
+ * Reads as whether or not the script is currently running passively
+ * If written to false, kills the script
+ * If written to true, launches (or restarts) the script
+
+bool ExitState[GENSCR_NUMST];
+ * An array of exit states. Each exit state, if true, specifies a condition for the script
+ *     to stop running passively. Use the 'GENSCR_ST_' constants from 'std_constants.zh'.
+ * All states default to 'false'
+
+bool ReloadState[GENSCR_NUMST];
+ * An array of reload states. Each reload state, if true, specifies a condition for the script
+ *     to exit and relaunch if running. Use the 'GENSCR_ST_' constants from 'std_constants.zh'.
+ * All states default to 'false'
+ * GENSCR_ST_RELOAD: Exits/Reloads upon exiting to the save select screen.
+ * GENSCR_ST_CONTINUE: Exits/Reloads upon 'F6->Continue' or similar.
+ * GENSCR_ST_CHANGE_SCREEN: Exits/Reloads upon loading a new screen
+ * GENSCR_ST_CHANGE_DMAP: Exits/Reloads upon loading a new dmap
+ * GENSCR_ST_CHANGE_LEVEL: Exits/Reloads upon loading a new dmap level
+
+int DataSize;
+ * Represents the size of the 'Data[]' array.
+ * Read/Write, result saves to the save file.
+ * If written larger than current size, 'new' space will be zeroed out.
+ * Default 0, range 0-214748.
+
+untyped Data[DataSize];
+ * An array of variable size, settable in 'DataSize' above.
+ * This data is saved to the save file.
+ * Attempting to access any index '>= DataSize' results in an error.
+
+untyped InitD[8];
+ * Access to the InitD[] for this script slot
+ * This is shared by the passive and frozen modes
 
 
 

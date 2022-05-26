@@ -1,5 +1,121 @@
 // 2.55 Change Log
-// Updated 8th April, 2022
+// Updated 11th May, 2022
+
+-- May 11th nightly build
+
+Add floating selection to tile editor
+	-A 'selected' area can now be moved
+	-Moving the selected area causes it to "float" above the rest of the tile
+	-While floating, it does not overwrite the pixels 'below' it
+	-Upon changing the selection or saving, it 'falls', merging back into the tile.
+	( EmilyV, May 11th, 2022 )
+
+Fix enemies causing death SFX when they shouldn't
+	( EmilyV, May 9th, 2022 )
+
+Add zscript angled weapon features
+	( DeeDee, May 9th, 2022 )
+	
+Fix separate 'item override' active shields not using
+	the correct shield.
+Fix several issues related to large items
+	-Large bottles now display correctly
+	-With a compat rule for old behavior, engine subscreen selectors
+		will now stretch to fit sized items on the subscreen (uses hit sizes)
+	-Large items will now preview correctly in the item editor
+	-Dropdown added for bottle items to preview any bottle type
+Fix crash near end of combo list with large combo brush size
+Active Shields: Step speed modifier, lock direction (strafing)
+	( EmilyV, May 7th, 2022 )
+
+Add 'fakez' for sprites, with 'fakejump'
+	( DeeDee, May 3rd, 2022 )
+
+-- May 2nd nightly build
+
+Fix crash in 4-way movement
+	( EmilyV, May 2nd, 2022 )
+
+-- May 1st nightly build
+
+Fix itemclass zinfo not refreshing on opening subscreen editor
+	( EmilyV, May 1, 2022 )
+
+Stomp boots can hit multiple enemies, and stunned/clocked enemies.
+	( Deedee, May 1, 2022 )
+
+Fix fairy spawning limit QR being reversed
+Fix scripted `npc->Knockback()` clipping into walls
+Add `->Drowning` and `->DrownCombo` access for scripts
+Add option to sort mapflags by ID
+	( Deedee, Apr 30, 2022 )
+
+Shields can now be configured to block different sides
+	( EmilyV, Apr 29, 2022 )
+
+Fix dmap script restarting issues
+	( Deedee, Apr 28, 2022 )
+
+Add 'npc->InvFlicker' to match 'Hero->InvFlicker'
+Add the new features from lock blocks to locked chests as well
+	Also, locked chests and boss-locked chests can now display a separate button-prompt
+	pop-up when you are unable to open them.
+Add 'open chest' sfx for chest combos
+Allow light targets to block light
+Add active shields (must hold button down to block)
+Add active clocks, 'Kill All Enemies', and the new itemclass 'Refiller' which
+	acts as an active version of a counter refilling item.
+	( EmilyV, Apr 27, 2022 )
+
+-- Apr 25th nightly build
+
+Fix issues with rotate/flip in combo editor
+Fix several issues with map flags, and added new shortcuts:
+	CTRL+Click will 'floodfill' a flag
+	ALT+Click will 'select' a flag
+	Holding SHIFT while in flag placement temporarily 'selects' the (None) flag,
+		acting like an eraser.
+	( EmilyV, Apr 25, 2022 )
+Add option to skip warning when placing flags on a layer they "don't work on"
+	( Deedee, Apr 25, 2022 )
+
+Add counter names to 'ZInfo' so that they can be renamed per-quest
+	( EmilyV, Apr 24, 2022 )
+
+-- Apr 24th nightly build
+
+Fix scrolling in dialog pop-ups carrying over to combo pane
+Add Combo Types and Mapflags to 'ZInfo', allowing custom names and
+	help text per-quest. Updated default names for some flags.
+	Hid unimplemented flags from view.
+New ZScript binary/octal format option
+Add visual button prompts for signposts/chests, and a 'ButtonPrompt' combo type
+	to display button prompts generically.
+Add 'Hero->TileMod' (read-only),
+	'Hero->Kill(bool bypass_revive)',
+	'Hero->Immortal'
+	( EmilyV, Apr 24, 2022 )
+
+Add 'generic' scripts, which can either:
+	-Run 'frozen', similar to Active Subscreen and onF6 slots
+	-Run 'passively' similar to Global Active, except, while running
+		passively, 'WaitTo()' can be used to wait until precise timings
+		within a frame.
+	( EmilyV, Apr 20, 2022 )
+Raft fixes
+	( Deedee, Apr 20, 2022 )
+
+Add multi-break/continue ('break 2;')
+Fix F4 not working during onDeath script
+Fix rounding error
+Fix enemy/pit collision
+	( EmilyV, Apr 19th, 2022 )
+
+Fix 'mapdata->Enemy[]' offset
+	( EmilyV, Apr 18th, 2022 )
+
+Fix enhanced music warp issue
+	( Deedee, Apr 10th, 2022 )
 
 //A106
 

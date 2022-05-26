@@ -79,6 +79,9 @@ typedef struct tilesequence
 #define HOV_OUT 0x02
 #define HOV_PITFALL_OUT 0x04
 
+#define DYING_FORCED 0x01
+#define DYING_NOREV  0x02
+
 class HeroClass : public sprite
 {
 	class WalkflagInfo
@@ -198,6 +201,7 @@ public:
 		stepnext,  //location of step->next just triggered (don't recursively trigger it)
 		stepsecret,  //location of step->secrets just triggered (don't recursively trigger it)
 		warpx,warpy, //location of warp just arrived at (don't recursively enter it)
+		raftwarpx,raftwarpy, //location of dock just arrived at (don't recursively restart raft)
 		pushing,  //incremental time spent pushing.
 		jumping,  //incremental time spent airborne.
 		charging, //incremental time spent charging weapon.
@@ -218,6 +222,7 @@ public:
 		didstuff, //played the whistle? used the blue candle?
 		blowcnt,  //number of times whistle blown on this screen.
 		drownclk, //drowning timeout.
+		drownCombo, //drowning timeout.
 		stepoutindex, // where to step out when in a passageway
 		stepoutwr, // which warp return to use for a passageway
 		stepoutdmap, // which dmap the passageway exits to
@@ -241,15 +246,16 @@ public:
 		switchhookstyle, //the switchhook animation style
 		switchhookarg; //a parameter based on the switchhook style
 	int32_t shiftdir, // shift direction when walking into corners of solid combos
-	lstunclock, //scripted stun clock from weapons; possibly for later eweapon effects in the future. 
-	lbunnyclock,
-	sdir, // scrolling direction
-	sideswimdir;  //for forcing hero to face left or right in sideview
+		lstunclock, //scripted stun clock from weapons; possibly for later eweapon effects in the future. 
+		lbunnyclock,
+		sdir, // scrolling direction
+		sideswimdir,  //for forcing hero to face left or right in sideview
+		immortal; //Timer for being unable to die
 	int32_t hammer_swim_up_offset,
-	hammer_swim_down_offset,
-	hammer_swim_left_offset,
-	hammer_swim_right_offset,
-	swimjump; //jump amount when leaving sideview water from the top
+		hammer_swim_down_offset,
+		hammer_swim_left_offset,
+		hammer_swim_right_offset,
+		swimjump; //jump amount when leaving sideview water from the top
 	int32_t hopdir;  // direction to hop out of water (diagonal movement only)
 	int32_t holddir;
 	int32_t landswim; // incremental time spent swimming against land
@@ -278,6 +284,12 @@ public:
 	int32_t subscr_speed;
 	bool is_warping;
 	bool can_mirror_portal;
+	byte dying_flags;
+	int32_t prompt_combo, prompt_x, prompt_y;
+	byte prompt_cset;
+	bool shield_active;
+	int8_t shield_forcedir;
+	int32_t active_shield_id;
 	
 	void set_respawn_point(bool setwarp = true);
 	void go_respawn_point();
@@ -313,6 +325,8 @@ public:
 	void explode(int32_t type);
 	int32_t getTileModifier();
 	void setTileModifier(int32_t ntemod);
+	void setImmortal(int32_t nimmortal);
+	void kill(bool bypassFairy);
 	bool try_hover();
 	int32_t check_pitslide(bool ignore_hover = false);
 	bool pitslide();
@@ -320,7 +334,7 @@ public:
 	void movehero();
 	void move(int32_t d, int32_t forceRate = -1);
 	void moveOld(int32_t d2);
-	void hithero(int32_t hit);
+	int32_t hithero(int32_t hit);
 	int32_t  nextcombo(int32_t cx,int32_t cy,int32_t cdir);
 	int32_t  nextflag(int32_t cx,int32_t cy,int32_t cdir, bool comboflag);
 	bool nextcombo_wf(int32_t d);
@@ -377,6 +391,7 @@ private:
 	void exitcave();
 	void stepout();
 	void masked_draw(BITMAP *dest);
+	void prompt_draw(BITMAP *dest);
 	void getTriforce(int32_t id);
 	int32_t weaponattackpower();
 	void positionNet(weapon* w,int32_t itemid);
@@ -385,6 +400,13 @@ private:
 	void fairycircle(int32_t type);
 	void StartRefill(int32_t refillWhat);
 	void Start250Refill(int32_t refillWhat);
+	
+#define CMPDIR_FRONT 0x1
+#define CMPDIR_BACK  0x2
+#define CMPDIR_LEFT  0x4
+#define CMPDIR_RIGHT 0x8
+	int32_t compareDir(int32_t other);
+	
 	int32_t  EwpnHit();
 	int32_t  LwpnHit();
 	void heroDeathAnimation();
@@ -437,7 +459,9 @@ public:
 	zfix  getX();
 	zfix  getY();
 	zfix  getZ();
+	zfix  getFakeZ();
 	zfix  getFall();
+	zfix  getFakeFall();
 	zfix  getXOfs();
 	zfix  getYOfs();
 	void setXOfs(int32_t newxofs);
@@ -453,11 +477,14 @@ public:
 	void setX(int32_t new_x);
 	void setY(int32_t new_y);
 	void setZ(int32_t new_Z);
+	void setFakeZ(int32_t new_Z);
 	
 	void setXfix(zfix new_x);
 	void setYfix(zfix new_y);
 	void setZfix(zfix new_Z);
+	void setFakeZfix(zfix new_Z);
 	void setFall(zfix new_fall);
+	void setFakeFall(zfix new_fall);
 	void setClimbCoverX(int32_t new_x);
 	void setClimbCoverY(int32_t new_y);
 	int32_t  getLStep();
@@ -507,9 +534,6 @@ public:
 	void setscriptnohit(bool);
 	bool getscriptnohit();
 	
-	 bool getCanHeroFlicker(); //enable or disable flicker or flash
-	void setCanHeroFlicker(bool v);
-	
 	void sethitHeroUID(int32_t type, int32_t screen_index);
 	void ClearhitHeroUIDs();
 	void set_defence(int32_t def, int32_t v);
@@ -552,6 +576,8 @@ public:
 	bool canSideviewLadderRemote(int32_t wx, int32_t wy, bool down = false);
 };
 
+bool usingActiveShield(int32_t itmid = -1);
+int32_t getCurrentShield(bool requireActive = true);
 bool isRaftFlag(int32_t flag);
 void do_lens();
 void do_210_lens();
@@ -583,6 +609,7 @@ const int32_t SEL_VERIFY_RIGHT = 5;
 int32_t selectWpn_new(int32_t type, int32_t startpos, int32_t forbiddenpos = -1, int32_t fp2 = -1, int32_t fp3 = -1);
 bool isWpnPressed(int32_t wpn);
 int32_t getWpnPressed(int32_t wpn);
+bool isItmPressed(int32_t itmid);
 int32_t selectSword();
 int32_t selectItemclass(int32_t itemclass);
 void selectNextAWpn(int32_t type);

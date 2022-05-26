@@ -2715,65 +2715,6 @@ enemy::enemy(enemy const & other, bool new_script_uid, bool clear_parent_script_
 	
 }
 
-/*
-void enemy::explode(int32_t type)
-{
-	al_trace("Trying to explode enemy tile: %d\n",o_tile);
-	tiledata *temptilebuf = NULL;
-	memset(temptilebuf, 0, sizeof(temptilebuf));
-	static int32_t tempx, tempy;
-	static byte linktilebuf[256];
-	int32_t ltile=0;
-	int32_t lflip=0;
-	unpack_tile(temptilebuf, tile, flip, true);
-	//unpack_tile(temptilebuf, tile, flip, true);
-	//unpack_tile(temptilebuf, o_tile, 0, true);
-	memcpy(linktilebuf, temptilebuf, 256);
-	tempx=x;
-	tempy=y;
-	for(int32_t i=0; i<16; ++i)
-	{
-				for(int32_t j=0; j<16; ++j)
-				{
-					if(linktilebuf[i*16+j])
-					{
-						if(type==0)  // Twilight
-						{
-							particles.add(new pTwilight((zfix)x+j, (zfix)y-(zfix)z+i, 5, 0, 0, (zc_oldrand()%8)+i*4));
-							int32_t k=particles.Count()-1;
-							particle *p = (particles.at(k));
-							p->step=3;
-						}
-						else if(type ==1)  // Sands of Hours
-						{
-							particles.add(new pTwilight((zfix)x+j, (zfix)y-(zfix)z+i, 5, 1, 2, (zc_oldrand()%16)+i*2));
-							int32_t k=particles.Count()-1;
-							particle *p = (particles.at(k));
-							p->step=4;
-							
-							if(zc_oldrand()%10 < 2)
-							{
-								p->color=1;
-								p->cset=0;
-							}
-						}
-						else
-						{
-							particles.add(new pFaroresWindDust((zfix)x+j, (zfix)y-(zfix)z+i, 5, 6, linktilebuf[i*16+j], zc_oldrand()%96));
-							
-							int32_t k=particles.Count()-1;
-							particle *p = (particles.at(k));
-							p->angular=true;
-							p->angle=zc_oldrand();
-							p->step=(((double)j)/8);
-							p->yofs=0;//yofs;
-						}
-					}
-				}
-	}
-}
-*/
-
 
 int32_t enemy::getScriptUID() { return script_UID; }
 void enemy::setScriptUID(int32_t new_id) { script_UID = new_id; }
@@ -2785,7 +2726,7 @@ enemy::~enemy()
 
 bool enemy::is_move_paused()
 {
-	return (clk<0 || dying || stunclk || watch || ceiling || frozenclock );
+	return (clk<0 || dying || stunclk || watch || ceiling || frozenclock || fallclk || drownclk);
 }
 
 bool enemy::scr_walkflag(int32_t dx,int32_t dy,int32_t special, int32_t dir, int32_t input_x, int32_t input_y, bool kb)
@@ -2858,8 +2799,8 @@ bool enemy::scr_walkflag(int32_t dx,int32_t dy,int32_t special, int32_t dir, int
 	bool shwtr = iwtr(ci, dx, dy, true);
 	bool pit = ispitfall(dx,dy);
 	
-	bool canwtr = (moveflags & FLAG_CAN_WATERWALK);
-	bool canpit = (moveflags & FLAG_CAN_PITWALK);
+	bool canwtr = (moveflags & FLAG_CAN_WATERWALK) || ((moveflags & FLAG_CAN_WATERDROWN) && kb);
+	bool canpit = (moveflags & FLAG_CAN_PITWALK) || ((moveflags & FLAG_CAN_PITFALL) && kb);
 	bool needwtr = (moveflags & FLAG_ONLY_WATERWALK);
 	bool needshwtr = (moveflags & FLAG_ONLY_SHALLOW_WATERWALK);
 	bool needpit = (moveflags & FLAG_ONLY_PITWALK);
@@ -2912,7 +2853,7 @@ bool enemy::scr_walkflag(int32_t dx,int32_t dy,int32_t special, int32_t dir, int
 	return false;
 }
 
-bool enemy::scr_canmove(zfix dx, zfix dy, int32_t special)
+bool enemy::scr_canmove(zfix dx, zfix dy, int32_t special, bool kb)
 {
 	if(!(dx || dy)) return true;
 	zfix bx = x+hxofs, by = y+hyofs; //left/top
@@ -2930,20 +2871,20 @@ bool enemy::scr_canmove(zfix dx, zfix dy, int32_t special)
 			special = (special==spw_clipbottomright||special==spw_clipright)?spw_none:special;
 			for(zfix ty = 0; by+ty < ry; ty += 8)
 			{
-				if(scr_walkflag(bx+dx, by+ty, special, left, bx+dx, by, false))
+				if(scr_walkflag(bx+dx, by+ty, special, left, bx+dx, by, kb))
 					return false;
 			}
-			if(scr_walkflag(bx+dx, ry, special, left, bx+dx, by, false))
+			if(scr_walkflag(bx+dx, ry, special, left, bx+dx, by, kb))
 				return false;
 		}
 		else
 		{
 			for(zfix ty = 0; by+ty < ry; ty += 8)
 			{
-				if(scr_walkflag(rx+dx, by+ty, special, right, bx+dx, by, false))
+				if(scr_walkflag(rx+dx, by+ty, special, right, bx+dx, by, kb))
 					return false;
 			}
-			if(scr_walkflag(rx+dx, ry, special, right, bx+dx, by, false))
+			if(scr_walkflag(rx+dx, ry, special, right, bx+dx, by, kb))
 				return false;
 		}
 	}
@@ -2954,32 +2895,57 @@ bool enemy::scr_canmove(zfix dx, zfix dy, int32_t special)
 			special = (special==spw_clipbottomright)?spw_none:special;
 			for(zfix tx = 0; bx+tx < rx; tx += 8)
 			{
-				if(scr_walkflag(bx+tx, by+dy, special, up, bx, by+dy, false))
+				if(scr_walkflag(bx+tx, by+dy, special, up, bx, by+dy, kb))
 					return false;
 			}
-			if(scr_walkflag(rx, by+dy, special, up, bx, by+dy, false))
+			if(scr_walkflag(rx, by+dy, special, up, bx, by+dy, kb))
 				return false;
 		}
 		else
 		{
 			for(zfix tx = 0; bx+tx < rx; tx += 8)
 			{
-				if(scr_walkflag(bx+tx, ry+dy, special, down, bx, by+dy, false))
+				if(scr_walkflag(bx+tx, ry+dy, special, down, bx, by+dy, kb))
 					return false;
 			}
-			if(scr_walkflag(rx, ry+dy, special, down, bx, by+dy, false))
+			if(scr_walkflag(rx, ry+dy, special, down, bx, by+dy, kb))
 				return false;
 		}
 	}
 	else
 	{
 		//!No diagonal checks.... this is a placeholder that might work?
-		return scr_canmove(dx, 0, special) && scr_canmove(dy, 0, special);
+		return scr_canmove(dx, 0, special, kb) && scr_canmove(dy, 0, special, kb);
 	}
 	return true;
 }
 
-bool enemy::movexy(zfix dx, zfix dy, int32_t special)
+bool enemy::scr_canplace(zfix dx, zfix dy, int32_t special, bool kb)
+{
+	zfix bx = dx+hxofs, by = dy+hyofs; //left/top
+	zfix rx = bx+hxsz-1, ry = by+hysz-1; //right/bottom
+	
+	for(zfix ty = 0; by+ty < ry; ty += 8)
+	{
+		for(zfix tx = 0; bx+tx < rx; tx += 8)
+		{
+			if(scr_walkflag(bx+tx, by+ty, special, -1, -1000, -1000, kb))
+				return false;
+		}
+		if(scr_walkflag(rx, by+ty, special, -1, -1000, -1000, kb))
+			return false;
+	}
+	for(zfix tx = 0; bx+tx < rx; tx += 8)
+	{
+		if(scr_walkflag(bx+tx, ry, special, -1, -1000, -1000, kb))
+			return false;
+	}
+	if(scr_walkflag(rx, ry, special, -1, -1000, -1000, kb))
+		return false;
+	return true;
+}
+
+bool enemy::movexy(zfix dx, zfix dy, int32_t special, bool kb)
 {
 	bool ret = true;
 	if(dy < 0 && (moveflags & FLAG_OBEYS_GRAV) && isSideViewGravity())
@@ -2990,7 +2956,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 		{
 			if(dx < 0)
 			{
-				if(movexy(-8, 0, special))
+				if(movexy(-8, 0, special, kb))
 					dx += 8;
 				else
 				{
@@ -3000,7 +2966,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 			}
 			else
 			{
-				if(movexy(8, 0, special))
+				if(movexy(8, 0, special, kb))
 					dx -= 8;
 				else
 				{
@@ -3013,7 +2979,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 		{
 			if(dy < 0)
 			{
-				if(movexy(0, -8, special))
+				if(movexy(0, -8, special, kb))
 					dy += 8;
 				else
 				{
@@ -3023,7 +2989,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 			}
 			else
 			{
-				if(movexy(0, 8, special))
+				if(movexy(0, 8, special, kb))
 					dy -= 8;
 				else
 				{
@@ -3036,20 +3002,20 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 	
 	if(dx)
 	{
-		if(scr_canmove(dx, 0, special))
+		if(scr_canmove(dx, 0, special, kb))
 			x += dx;
 		else
 		{
 			ret = false;
 			x.doTrunc();
 			dx.doTrunc();
-			if(scr_canmove(dx/abs(dx), 0, special)) //can move at all in the direction
+			if(scr_canmove(dx/abs(dx), 0, special, kb)) //can move at all in the direction
 			{
 				if(dx < 0)
 				{
 					while(dx < 0)
 					{
-						if(scr_canmove(dx, 0, special))
+						if(scr_canmove(dx, 0, special, kb))
 						{
 							x += dx;
 							break;
@@ -3061,7 +3027,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 				{
 					while(dx > 0)
 					{
-						if(scr_canmove(dx, 0, special))
+						if(scr_canmove(dx, 0, special, kb))
 						{
 							x += dx;
 							break;
@@ -3074,20 +3040,20 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 	}
 	if(dy)
 	{
-		if(scr_canmove(0, dy, special))
+		if(scr_canmove(0, dy, special, kb))
 			y += dy;
 		else
 		{
 			ret = false;
 			y.doTrunc();
 			dy.doTrunc();
-			if(scr_canmove(0, dy/abs(dy), special)) //can move at all in the direction
+			if(scr_canmove(0, dy/abs(dy), special, kb)) //can move at all in the direction
 			{
 				if(dy < 0)
 				{
 					while(dy < 0)
 					{
-						if(scr_canmove(0, dy, special))
+						if(scr_canmove(0, dy, special, kb))
 						{
 							y += dy;
 							break;
@@ -3099,7 +3065,7 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 				{
 					while(dy > 0)
 					{
-						if(scr_canmove(0, dy, special))
+						if(scr_canmove(0, dy, special, kb))
 						{
 							y += dy;
 							break;
@@ -3113,58 +3079,58 @@ bool enemy::movexy(zfix dx, zfix dy, int32_t special)
 	return ret;
 }
 
-bool enemy::moveDir(int32_t dir, zfix px, int32_t special)
+bool enemy::moveDir(int32_t dir, zfix px, int32_t special, bool kb)
 {
 	zfix diagrate = zslongToFix(7071);
 	switch(NORMAL_DIR(dir))
 	{
 		case up:
-			return movexy(0, -px, special);
+			return movexy(0, -px, special, kb);
 		case down:
-			return movexy(0, px, special);
+			return movexy(0, px, special, kb);
 		case left:
-			return movexy(-px, 0, special);
+			return movexy(-px, 0, special, kb);
 		case right:
-			return movexy(px, 0, special);
+			return movexy(px, 0, special, kb);
 		case r_up:
-			return movexy(px*diagrate, -px*diagrate, special);
+			return movexy(px*diagrate, -px*diagrate, special, kb);
 		case r_down:
-			return movexy(px*diagrate, px*diagrate, special);
+			return movexy(px*diagrate, px*diagrate, special, kb);
 		case l_up:
-			return movexy(-px*diagrate, -px*diagrate, special);
+			return movexy(-px*diagrate, -px*diagrate, special, kb);
 		case l_down:
-			return movexy(-px*diagrate, px*diagrate, special);
+			return movexy(-px*diagrate, px*diagrate, special, kb);
 	}
 	return false;
 }
 
-bool enemy::moveAtAngle(zfix degrees, zfix px, int32_t special)
+bool enemy::moveAtAngle(zfix degrees, zfix px, int32_t special, bool kb)
 {
 	double v = degrees.getFloat() * PI / 180.0;
 	zfix dx = cos(v)*px, dy = sin(v)*px;
-	return movexy(dx, dy, special);
+	return movexy(dx, dy, special, kb);
 }
 
-bool enemy::can_movexy(zfix dx, zfix dy, int32_t special)
+bool enemy::can_movexy(zfix dx, zfix dy, int32_t special, bool kb)
 {
 	zfix tx = x, ty = y;
-	bool ret = movexy(dx, dy, special);
+	bool ret = movexy(dx, dy, special, kb);
 	x = tx;
 	y = ty;
 	return ret;
 }
-bool enemy::can_moveDir(int32_t dir, zfix px, int32_t special)
+bool enemy::can_moveDir(int32_t dir, zfix px, int32_t special, bool kb)
 {
 	zfix tx = x, ty = y;
-	bool ret = moveDir(dir, px, special);
+	bool ret = moveDir(dir, px, special, kb);
 	x = tx;
 	y = ty;
 	return ret;
 }
-bool enemy::can_moveAtAngle(zfix degrees, zfix px, int32_t special)
+bool enemy::can_moveAtAngle(zfix degrees, zfix px, int32_t special, bool kb)
 {
 	zfix tx = x, ty = y;
-	bool ret = moveAtAngle(degrees, px, special);
+	bool ret = moveAtAngle(degrees, px, special, kb);
 	x = tx;
 	y = ty;
 	return ret;
@@ -3374,7 +3340,7 @@ bool enemy::animate(int32_t index)
 	{
 	//skip, as it can go out of bounds, from immortality
 	}
-	else if (   ( (get_bit(quest_rules, qr_OUTOFBOUNDSENEMIES)) != (editorflags&ENEMY_FLAG11) ) && !NEWOUTOFBOUNDS(x,y,z)   )
+	else if (   ( (get_bit(quest_rules, qr_OUTOFBOUNDSENEMIES)) != (editorflags&ENEMY_FLAG11) ) && !NEWOUTOFBOUNDS(x,y,z+fakez)   )
 	{
 	//skip, it can go out of bounds, from a quest rule, or from the enemy editor (but not both!)
 	}
@@ -3427,28 +3393,43 @@ bool enemy::animate(int32_t index)
 		}
 		else
 		{
-			if(fall!=0)
-				z-=(fall/100);
+			if (!(moveflags & FLAG_NO_FAKE_Z))
+			{
+				if(fakefall!=0)
+					fakez-=(fakefall/100);
+					
+				if(fakez<0)
+					fakez = fakefall = 0;
+				else if(fakefall <= (int32_t)zinit.terminalv)
+					fakefall += (zinit.gravity2/100);
 				
-			if(z<0)
-				z = fall = 0;
-			else if(fall <= (int32_t)zinit.terminalv)
-				fall += (zinit.gravity2/100);
-			
-			if (z<=0 && fall > 0 && !get_bit(quest_rules, qr_FLUCTUATING_ENEMY_JUMP)) fall = 0;
+				if (fakez<=0 && fakefall > 0 && !get_bit(quest_rules, qr_FLUCTUATING_ENEMY_JUMP)) fakefall = 0;
+			}
+			if (!(moveflags & FLAG_NO_REAL_Z))
+			{
+				if(fall!=0)
+					z-=(fall/100);
+					
+				if(z<0)
+					z = fall = 0;
+				else if(fall <= (int32_t)zinit.terminalv)
+					fall += (zinit.gravity2/100);
+				
+				if (z<=0 && fall > 0 && !get_bit(quest_rules, qr_FLUCTUATING_ENEMY_JUMP)) fall = 0;
+			}
 			
 		}
 	}
 	if(!isSideViewGravity() && (moveflags & FLAG_CAN_PITFALL))
 	{
-		if(can_pitfall() && ((z <= 0 && !isflier(id)) || (isflier(id) && (stunclk))) && !superman)
+		if(can_pitfall() && ((z <= 0 && fakez <= 0 && !isflier(id)) || (isflier(id) && (stunclk))) && !superman)
 		{
 			fallCombo = check_pits();
 		}
 	}
 	if(!isSideViewGravity() && (moveflags & FLAG_CAN_WATERDROWN))
 	{
-		if(can_pitfall() && ((z <= 0 && !isflier(id)) || (isflier(id) && (stunclk))) && !superman)
+		if(can_pitfall() && ((z <= 0 && fakez <= 0 && !isflier(id)) || (isflier(id) && (stunclk))) && !superman)
 		{
 			drownCombo = check_water();
 		}
@@ -3469,7 +3450,7 @@ bool enemy::animate(int32_t index)
 	if ( frozenclock > 0 ) 
 		--frozenclock;
 		
-	if(ceiling && z<=0)
+	if(ceiling && z <= 0 && fakez <= 0)
 		ceiling = false;
 	
 	try_death();
@@ -3859,7 +3840,7 @@ void enemy::FireBreath(bool seekhero)
 		wy = y;
 	}
 	
-	addEwpn(wx,wy,z,wpn,2,wdp,seekhero ? 0xFF : wdir, getUID());
+	addEwpn(wx,wy,z,wpn,2,wdp,seekhero ? 0xFF : wdir, getUID(), 0, fakez);
 	sfx(wpnsfx(wpn),pan(int32_t(x)));
 	
 	int32_t i=Ewpns.Count()-1;
@@ -3918,17 +3899,22 @@ void enemy::FireWeapon()
 	{
 	case e1t5SHOTS: //BS-Aquamentus
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(((dir^left)+5)<<3),wdp,dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(((dir^right)+5)<<3),wdp,dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		
 		[[fallthrough]];
 	case e1t3SHOTSFAST:
 	case e1t3SHOTS: //Aquamentus
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(((dir^left)+1)<<3)+(dmisc1==e1t3SHOTSFAST ? 4:0),wdp,dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(((dir^right)+1)<<3)+(dmisc1==e1t3SHOTSFAST ? 4:0),wdp,dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 
 		[[fallthrough]];
 	default:
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(dmisc1==e1t3SHOTSFAST || dmisc1==e1tFAST ? 4:0),wdp,wpn==ewFireball2 || wpn==ewFireball ? 0:dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 		break;
 		
@@ -3942,29 +3928,38 @@ void enemy::FireWeapon()
 			slant = right;
 			
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,2+(((dir^slant)+1)<<3),wdp,wpn==ewFireball2 || wpn==ewFireball ? 0:dir,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 		break;
 	}
 	
 	case e1t8SHOTS: //Fire Wizzrobe
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,l_up,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,l_down,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,r_up,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,r_down,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 
 		[[fallthrough]];
 	case e1t4SHOTS: //Stalfos 3
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,up,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,down,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,left,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,0,wdp,right,-1, getUID(),false));
+		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 		break;
@@ -4036,13 +4031,18 @@ void enemy::FireWeapon()
 					
 					if((!m_walkflag(x2,y2,0,dir))&&((abs(x2-Hero.getX())>=32)||(abs(y2-Hero.getY())>=32)))
 					{
-				//zprint2("summon\n");
-				//al_trace("summon\n");
+						//zprint2("summon\n");
+						//al_trace("summon\n");
 						if(addchild(x2,y2,get_bit(quest_rules,qr_ENEMIESZAXIS) ? 64 : 0,id2,-10, this->script_UID))
-			{
+						{
 							((enemy*)guys.spr(kids+i))->count_enemy = false;
 							//((enemy*)guys.spr(guys.Count()-1))->parent_script_UID = this->script_UID;
-			}
+							if (get_bit(quest_rules,qr_ENEMIESZAXIS) && (((enemy*)guys.spr(kids+i))->moveflags & FLAG_USE_FAKE_Z)) 
+							{
+								((enemy*)guys.spr(kids+i))->fakez = 64;
+								((enemy*)guys.spr(kids+i))->z = 0;
+							}
+						}
 							
 						summoned=true;
 						break;
@@ -4980,25 +4980,25 @@ int32_t enemy::defendNew(int32_t wpnId, int32_t *power, int32_t edef, byte unblo
 			{
 				case -7:
 				{
-					weapon *w = new weapon(x,y,z,wBomb,0,wdp,0,-1,getUID(),false, 0);
+					weapon *w = new weapon(x,y-fakez,z,wBomb,0,wdp,0,-1,getUID(),false, 0);
 					Lwpns.add(w);
 					break;
 				}
 				case -6:
 				{
-					weapon *w = new weapon(x,y,z,wSBomb,0,wdp,0,-1,getUID(),false, 0);
+					weapon *w = new weapon(x,y-fakez,z,wSBomb,0,wdp,0,-1,getUID(),false, 0);
 					Lwpns.add(w);
 					break;
 				}
 				case -5: 
 				{
-					weapon *w = new weapon(x,y,z,wBomb,effect_type,0,0,Hero.getUID(), txsz, tysz);
+					weapon *w = new weapon(x,y-fakez,z,wBomb,effect_type,0,0,Hero.getUID(), txsz, tysz);
 					Lwpns.add(w);
 					break;
 				}
 				case -4:
 				{
-					weapon *w = new weapon(x,y,z,wSBomb,effect_type,0,0,Hero.getUID(), txsz, tysz);
+					weapon *w = new weapon(x,y-fakez,z,wSBomb,effect_type,0,0,Hero.getUID(), txsz, tysz);
 					Lwpns.add(w);
 					break;
 				}
@@ -5011,8 +5011,7 @@ int32_t enemy::defendNew(int32_t wpnId, int32_t *power, int32_t edef, byte unblo
 				{
 					//Dummy weapon function
 					if ( effect_type > 255 ) effect_type = 0; //Sanity bound the sprite ID.
-					//weapon *w = new weapon(x,y,z,dummy_wpn_id,effect_type,0,0,Hero.getUID(), txsz, tysz);
-					weapon *w = new weapon(x,y,z,wSSparkle,effect_type,0,0,Hero.getUID(), txsz, tysz,0,0,0,0,0,0,0);
+					weapon *w = new weapon(x,y-fakez,z,wSSparkle,effect_type,0,0,Hero.getUID(), txsz, tysz,0,0,0,0,0,0,0);
 					Lwpns.add(w);
 					break;
 				}
@@ -5094,7 +5093,7 @@ int32_t enemy::defendNew(int32_t wpnId, int32_t *power, int32_t edef, byte unblo
 		
 		case edEXPLODESMALL:
 		{
-			weapon *ew=new weapon(x,y,z, ewBomb, 0, dmisc4, dir,-1,getUID(),false);
+			weapon *ew=new weapon(x,y-fakez,z, ewBomb, 0, dmisc4, dir,-1,getUID(),false);
 			Ewpns.add(ew);
 			item_set = 0; //Should we make a drop?
 			hp = -1000;
@@ -5104,7 +5103,7 @@ int32_t enemy::defendNew(int32_t wpnId, int32_t *power, int32_t edef, byte unblo
 		
 		case edEXPLODEHARMLESS:
 		{
-			weapon *ew=new weapon(x,y,z, ewSBomb, 0, dmisc4, dir,-1,getUID(),false);
+			weapon *ew=new weapon(x,y-fakez,z, ewSBomb, 0, dmisc4, dir,-1,getUID(),false);
 			Ewpns.add(ew);
 			ew->hyofs = -32768;
 			item_set = 0; //Should we make a drop?
@@ -5115,7 +5114,7 @@ int32_t enemy::defendNew(int32_t wpnId, int32_t *power, int32_t edef, byte unblo
 		
 		case edEXPLODELARGE:
 		{
-			weapon *ew=new weapon(x,y,z, ewSBomb, 0, dmisc4, dir,-1,getUID(),false);
+			weapon *ew=new weapon(x,y-fakez,z, ewSBomb, 0, dmisc4, dir,-1,getUID(),false);
 			Ewpns.add(ew);
 			
 			hp = -1000;
@@ -6255,7 +6254,8 @@ void enemy::draw(BITMAP *dest)
 				{
 					spr_death_anim_clk=0;
 					clk2=1;
-					death_sfx();
+					if(hp > -1000)
+						death_sfx();
 				}
 				if(clk2==1 && spr_death_anim_clk>-1)
 				{
@@ -6295,7 +6295,7 @@ void enemy::draw(BITMAP *dest)
 		else
 			cs = (((clk2+5)>>1)&3)+6;
 	}
-	else if(hclk>0)
+	else if(hclk>0 && getCanFlicker())
 	{
 		if(family==eeGANON)
 			cs=(((hclk-1)>>1)&3)+6;
@@ -6303,7 +6303,7 @@ void enemy::draw(BITMAP *dest)
 			cs=(((hclk-1)>>1)&3)+6;
 	}
 	//draw every other frame for flickering enemies
-	if((frame&1)==1 || !(family !=eeGANON && hclk>0 && get_bit(quest_rules,qr_ENEMIESFLICKER)))
+	if((frame&1)==1 || !(family !=eeGANON && hclk>0 && get_bit(quest_rules,qr_ENEMIESFLICKER) && getCanFlicker()))
 	{
 		if (canSee == DRAW_CLOAKED)
 		{
@@ -6351,7 +6351,8 @@ void enemy::drawzcboss(BITMAP *dest)
 				{
 					spr_death_anim_clk=0;
 					clk2=1;
-					death_sfx();
+					if(hp > -1000)
+						death_sfx();
 				}
 				if(clk2==1 && spr_death_anim_clk>-1)
 				{
@@ -6503,20 +6504,10 @@ void enemy::drawshadow(BITMAP *dest, bool translucent)
 	}
 	else
 	{
-		/*   if (enemycanfall(id) && z>0)
-			 shadowtile = wpnsbuf[spr_shadow].tile;
-		   sprite::drawshadow(dest,translucent);
-		   if (z==0)
-			 shadowtile = 0;*/
-		// a bad idea, as enemies do their own setting of the shadow tile (since some use the
-		// 2x2 tiles, shadows animate, etc.) -DD
-		
-		//this hack is in place as not all enemies that should use the z axis while in the air
-		//(ie rocks, boulders) actually do. To be removed when the enemy revamp is complete -DD
 		if(enemycanfall(id) && shadowtile == 0)
 			shadowtile = wpnsbuf[spr_shadow].newtile;
 			
-		if(z>0 || !enemycanfall(id))
+		if(z>0 || fakez>0 || !enemycanfall(id))
 		{
 			if(!shadow_overpit(this))
 			sprite::drawshadow(dest,translucent);
@@ -6601,7 +6592,7 @@ void enemy::try_death(bool force_kill)
 						if (get_bit(quest_rules, qr_ENEMY_DROPS_USE_HITOFFSETS))
 						{
 							items.spr(i)->x = x+hxofs+(hxsz/2)-8;
-							items.spr(i)->y = y+hyofs+(hysz/2)-10;
+							items.spr(i)->y = y+hyofs+(hysz/2)-10-fakez;
 						}
 						else
 						{
@@ -6617,6 +6608,7 @@ void enemy::try_death(bool force_kill)
 							}
 						}
 						items.spr(i)->z = z;
+						items.spr(i)->fakez = fakez;
 					}
 					else
 					{
@@ -7653,9 +7645,10 @@ bool enemy::runKnockback()
 	int32_t move = script_knockback_speed;
 	int32_t kb_dir = script_knockback_clk>>8;
 	--script_knockback_clk;
+	
 	while(move>0)
 	{
-		int32_t thismove = zc_min(8, move);
+		int32_t thismove = zc_min(get_bit(quest_rules, qr_OLD_SCRIPTED_KNOCKBACK)?8:4, move);
 		move -= thismove;
 		hitdir = kb_dir;
 		switch(kb_dir)
@@ -7686,40 +7679,116 @@ bool enemy::runKnockback()
 				x+=thismove;
 				break;
 		}
-		if(!canmove(kb_dir,(zfix)0,0,true))
+		if (get_bit(quest_rules, qr_OLD_SCRIPTED_KNOCKBACK))
 		{
-			script_knockback_clk=0;
-			clk3=0;
-			//Fix to grid
-			switch(kb_dir)
+			if(!canmove(kb_dir,(zfix)0,0,true))
 			{
-				case up:
-				case down:
-					break;
-				default:
-					if(x < 0)
-						x = 0;
-					else if((int32_t(x)&15) > 7)
-						x=(int32_t(x)&0xF0)+16;
-					else
-						x=(int32_t(x)&0xF0);
-					break;
+				script_knockback_clk=0;
+				clk3=0;
+				//Fix to grid
+				switch(kb_dir)
+				{
+					case up:
+					case down:
+						break;
+					default:
+						if(x < 0)
+							x = 0;
+						else if((int32_t(x)&15) > 7)
+							x=(int32_t(x)&0xF0)+16;
+						else
+							x=(int32_t(x)&0xF0);
+						break;
+				}
+				switch(kb_dir)
+				{
+					case left:
+					case right:
+						break;
+					default:
+						if(y < 0)
+							y = 0;
+						else if((int32_t(y)&15) > 7)
+							y=(int32_t(y)&0xF0)+16;
+						else
+							y=(int32_t(y)&0xF0);
+						break;
+				}
+				break;
 			}
-			switch(kb_dir)
+		}
+		else
+		{
+			if(!scr_canplace(x,y,0,true))
 			{
-				case left:
-				case right:
-					break;
-				default:
-					if(y < 0)
-						y = 0;
-					else if((int32_t(y)&15) > 7)
-						y=(int32_t(y)&0xF0)+16;
-					else
-						y=(int32_t(y)&0xF0);
-					break;
+				script_knockback_clk=0;
+				clk3=0;
+				//Fix to grid
+				if (OFFGRID_ENEMY)
+				{
+					switch(kb_dir)
+					{
+						case up:
+						case down:
+							break;
+						default:
+							if(x < 0)
+								x = 0;
+							else if((int32_t(x)&7) > 3)
+								x=(int32_t(x)&0xF8)+8;
+							else
+								x=(int32_t(x)&0xF8);
+							break;
+					}
+					switch(kb_dir)
+					{
+						case left:
+						case right:
+							break;
+						default:
+							if(y < 0)
+								y = 0;
+							else if((int32_t(y)&7) > 3)
+								y=(int32_t(y)&0xF8)+8;
+							else
+								y=(int32_t(y)&0xF8);
+							break;
+					}
+				}
+				else
+				{
+					switch(kb_dir)
+					{
+						case up:
+						case down:
+							break;
+						default:
+							if(x < 0)
+								x = 0;
+							else if((int32_t(x)&15) > 7)
+								x=(int32_t(x)&0xF0)+16;
+							else
+								x=(int32_t(x)&0xF0);
+							break;
+					}
+					switch(kb_dir)
+					{
+						case left:
+						case right:
+							break;
+						default:
+							if(y < 0)
+								y = 0;
+							else if((int32_t(y)&15) > 7)
+								y=(int32_t(y)&0xF0)+16;
+							else
+								y=(int32_t(y)&0xF0);
+							break;
+					}
+				}
+				break;
 			}
-			break;
+
 		}
 	}
 	return true;
@@ -8406,9 +8475,10 @@ void enemy::place_on_axis(bool floater, bool solid_ok)
 	clk2=tried;
 }
 
-void enemy::n_frame_n_dir(int32_t frames, int32_t ndir, int32_t f4)
+int32_t enemy::n_frame_n_dir(int32_t frames, int32_t ndir, int32_t f4)
 {
 	int32_t t = o_tile;
+	int32_t b = o_tile;
 	
 	// Darknuts, but also Wizzrobes and Wallmasters
 	switch(family)
@@ -8418,6 +8488,7 @@ void enemy::n_frame_n_dir(int32_t frames, int32_t ndir, int32_t f4)
 		{
 			tile=s_tile;
 			t=s_tile;
+			b=s_tile;
 		}
 		
 		break;
@@ -8427,6 +8498,7 @@ void enemy::n_frame_n_dir(int32_t frames, int32_t ndir, int32_t f4)
 		{
 			tile=s_tile;
 			t=s_tile;
+			b=s_tile;
 		}
 		
 		break;
@@ -8462,6 +8534,7 @@ void enemy::n_frame_n_dir(int32_t frames, int32_t ndir, int32_t f4)
 		else
 		tile+=f4;
 	}
+	return b;
 }
 
 void enemy::tiledir_three(int32_t ndir)
@@ -8713,6 +8786,7 @@ void enemy::update_enemy_frame()
 	int32_t f2=abs(clk/(newfrate/2)); // casts clk to [0,1]
 	int32_t fx = get_bit(quest_rules, qr_NEWENEMYTILES) ? f4 : f2;
 	tile = o_tile;
+	int32_t basetile = o_tile;
 	int32_t tilerows = 1; // How many rows of tiles? The Extend code needs to know.
 	bool ignore_extend = false;
 	switch(anim)
@@ -9069,13 +9143,13 @@ void enemy::update_enemy_frame()
 	
 	case a3FRM:
 	{
-		n_frame_n_dir(3, 0, (f4==3) ? 1 : f4);
+		basetile = n_frame_n_dir(3, 0, (f4==3) ? 1 : f4);
 	}
 	break;
 	
 	case a3FRM4DIR:
 	{
-		n_frame_n_dir(3, 4, (f4==3) ? 1 : f4);
+		basetile = n_frame_n_dir(3, 4, (f4==3) ? 1 : f4);
 	}
 	break;
 	
@@ -9114,6 +9188,7 @@ void enemy::update_enemy_frame()
 			dl=clk-36-66;
 waves2:
 			tile=((dl/11)&1)+s_tile;
+			basetile = s_tile;
 		}
 	}
 	break;
@@ -9201,7 +9276,7 @@ waves2:
 		
 		int32_t dir2 = dir;
 		dir = lookat;
-		if (anim != a4FRM8EYEB && anim != a4FRM4EYEB) n_frame_n_dir(anim==a2FRM4EYE ? 2:4, anim==a4FRM8EYE ? 8 : 4, anim==a2FRM4EYE ? (f2&1):f4);
+		if (anim != a4FRM8EYEB && anim != a4FRM4EYEB) basetile = n_frame_n_dir(anim==a2FRM4EYE ? 2:4, anim==a4FRM8EYE ? 8 : 4, anim==a2FRM4EYE ? (f2&1):f4);
 		else 
 		{
 			tiledir_big(dir,(anim == a4FRM4EYEB));
@@ -9233,13 +9308,13 @@ waves2:
 	
 	case a2FRM4DIR:
 	{
-		n_frame_n_dir(2, 4, f2&1);
+		basetile = n_frame_n_dir(2, 4, f2&1);
 	}
 	break;
 	
 	case a4FRM4DIRF:
 	{
-		n_frame_n_dir(4,4,f4);
+		basetile = n_frame_n_dir(4,4,f4);
 		
 		if(clk2>0)                                              //stopped to fire
 		{
@@ -9255,14 +9330,14 @@ waves2:
 	
 	case a4FRM4DIR:
 	{
-		n_frame_n_dir(4,4,f4);
+		basetile = n_frame_n_dir(4,4,f4);
 	}
 	break;
 	
 	case a4FRM8DIRF:
 	{
 		tilerows = 2;
-		n_frame_n_dir(4,8,f4);
+		basetile = n_frame_n_dir(4,8,f4);
 		
 		if(clk2>0)                                              //stopped to fire
 		{
@@ -9373,6 +9448,7 @@ waves2:
 		if((get_bit(quest_rules,qr_BRKNSHLDTILES)) && (dummy_bool[1]==true))
 		{
 			tile=s_tile;
+			basetile = s_tile;
 		}
 		
 		switch(dir)
@@ -9552,7 +9628,7 @@ waves2:
 	
 	case a4FRMPOS4DIR:
 	{
-		n_frame_n_dir(4,4,0);
+		basetile = n_frame_n_dir(4,4,0);
 		//        tile+=f2;
 		tile+=posframe;
 	}
@@ -9560,7 +9636,7 @@ waves2:
 	
 	case a4FRMPOS4DIRF:
 	{
-		n_frame_n_dir(4,4,0);
+		basetile = n_frame_n_dir(4,4,0);
 		
 		if(clk2>0)                                              //stopped to fire
 		{
@@ -9581,7 +9657,7 @@ waves2:
 	{
 		tilerows = 2;
 		int32_t n = tile;
-		n_frame_n_dir(4,8,0);
+		basetile = n_frame_n_dir(4,8,0);
 		//        tile+=f2;
 		tile+=posframe;
 	}
@@ -9590,7 +9666,7 @@ waves2:
 	case a4FRMPOS8DIRF:
 	{
 		tilerows = 2;
-		n_frame_n_dir(4,8,0);
+		basetile = n_frame_n_dir(4,8,0);
 		
 		if(clk2>0)                                              //stopped to fire
 		{
@@ -9728,22 +9804,22 @@ waves2:
 		drawstyle=1;
 	}
 	
-	int32_t change = tile-o_tile;
+	int32_t change = tile-basetile;
 	
 	if(extend > 2 && (!ignore_extend || get_bit(quest_rules, qr_BROKEN_BIG_ENEMY_ANIMATION)))
 	{
-		if(o_tile/TILES_PER_ROW==(o_tile+((txsz*change)/tilerows))/TILES_PER_ROW)
+		if(basetile/TILES_PER_ROW==(basetile+((txsz*change)/tilerows))/TILES_PER_ROW)
 		{
-			tile=o_tile+txsz*change;
+			tile=basetile+txsz*change;
 		}
 		else
 		{
-			tile=o_tile+(txsz*change)+((tysz-1)*TILES_PER_ROW)*(((o_tile+txsz*change)/TILES_PER_ROW)-(o_tile/TILES_PER_ROW));
+			tile=basetile+(txsz*change)+((tysz-1)*TILES_PER_ROW)*(((basetile+txsz*change)/TILES_PER_ROW)-(basetile/TILES_PER_ROW));
 		}
 	}
 	else
 	{
-		tile=o_tile+change;
+		tile=basetile+change;
 	}
 }
 
@@ -9917,7 +9993,7 @@ bool eFire::animate(int32_t index)
 			superman=0;
 			fading=0;
 			
-			if(flags2&cmbflag_armos && z==0)
+			if(flags2&cmbflag_armos && z==0 && fakez==0)
 				removearmos(x,y);
 				
 			clk2=0;
@@ -9930,7 +10006,7 @@ bool eFire::animate(int32_t index)
 			
 			return Dead(index);
 		}
-		else if(flags2&cmbflag_armos && z==0 && clk==0)
+		else if(flags2&cmbflag_armos && z==0 && fakez==0 && clk==0)
 			removearmos(x,y);
 	}
 	
@@ -10031,7 +10107,7 @@ bool eOther::animate(int32_t index)
 			superman=0;
 			fading=0;
 			
-			if(flags2&cmbflag_armos && z==0)
+			if(flags2&cmbflag_armos && z==0 && fakez==0)
 				removearmos(x,y);
 				
 			clk2=0;
@@ -10044,7 +10120,7 @@ bool eOther::animate(int32_t index)
 			
 			return Dead(index);
 		}
-		else if(flags2&cmbflag_armos && z==0 && clk==0)
+		else if(flags2&cmbflag_armos && z==0 && fakez==0 && clk==0)
 			removearmos(x,y);
 	}
 	
@@ -10144,7 +10220,7 @@ bool eScript::animate(int32_t index)
 			superman=0;
 			fading=0;
 			
-			if(flags2&cmbflag_armos && z==0)
+			if(flags2&cmbflag_armos && z==0 && fakez==0)
 				removearmos(x,y);
 				
 			clk2=0;
@@ -10157,7 +10233,7 @@ bool eScript::animate(int32_t index)
 			
 			return Dead(index);
 		}
-		else if(flags2&cmbflag_armos && z==0 && clk==0)
+		else if(flags2&cmbflag_armos && z==0 && fakez==0 && clk==0)
 			removearmos(x,y);
 	}
 	
@@ -10258,7 +10334,7 @@ bool eFriendly::animate(int32_t index)
 			superman=0;
 			fading=0;
 			
-			if(flags2&cmbflag_armos && z==0)
+			if(flags2&cmbflag_armos && z==0 && fakez==0)
 				removearmos(x,y);
 				
 			clk2=0;
@@ -10271,7 +10347,7 @@ bool eFriendly::animate(int32_t index)
 			
 			return Dead(index);
 		}
-		else if(flags2&cmbflag_armos && z==0 && clk==0)
+		else if(flags2&cmbflag_armos && z==0 && fakez==0 && clk==0)
 			removearmos(x,y);
 	}
 	
@@ -10656,11 +10732,22 @@ bool eTektite::animate(int32_t index)
 	
 	if(get_bit(quest_rules,qr_ENEMIESZAXIS) && misc==2)
 	{
-		int32_t tempy = floor_y;
-		z=zc_max(0,zc_min(clk2start-clk2,clk2));
-		floor_y = y;
-		y=tempy-z;
-		old_y = y;
+		if (moveflags & FLAG_USE_FAKE_Z)
+		{
+			int32_t tempy = floor_y;
+			fakez=zc_max(0,zc_min(clk2start-clk2,clk2));
+			floor_y = y;
+			y=tempy-fakez;
+			old_y = y;
+		}
+		else
+		{
+			int32_t tempy = floor_y;
+			z=zc_max(0,zc_min(clk2start-clk2,clk2));
+			floor_y = y;
+			y=tempy-z;
+			old_y = y;
+		}
 	}
 	
 	if(stunclk && (clk&31)==1)
@@ -10671,7 +10758,7 @@ bool eTektite::animate(int32_t index)
 
 void eTektite::drawshadow(BITMAP *dest,bool translucent)
 {
-	if(z<1 && get_bit(quest_rules,qr_ENEMIESZAXIS))
+	if(z<1 && fakez<1 && get_bit(quest_rules,qr_ENEMIESZAXIS))
 		return;
 		
 	int32_t tempy=yofs;
@@ -10830,7 +10917,8 @@ bool ePeahat::animate(int32_t index)
 	
 	if(get_bit(quest_rules,qr_ENEMIESZAXIS) && !(isSideViewGravity()))
 	{
-		z=int32_t(step*1.1/((zslongToFix(dstep*10))*1.1));
+		if (moveflags & FLAG_USE_FAKE_Z) fakez=int32_t(step*1.1/((zslongToFix(dstep*10))*1.1));
+		else z=int32_t(step*1.1/((zslongToFix(dstep*10))*1.1));
 	}
 	
 	if(watch && get_bit(quest_rules,qr_PEAHATCLOCKVULN))
@@ -12115,7 +12203,7 @@ bool eBoulder::animate(int32_t index)
 	}
 	
 	zfix *vert;
-	vert = get_bit(quest_rules,qr_ENEMIESZAXIS) ? &z : &y;
+	vert = (moveflags & FLAG_USE_FAKE_Z) ? &fakez : get_bit(quest_rules,qr_ENEMIESZAXIS) ? &z : &y;
 	
 	if(++clk2==0)                                             // start it
 	{
@@ -12744,9 +12832,8 @@ bool eZora::animate(int32_t index)
 		hxofs=0;
 		break;
 		
-//    case 35+19: addEwpn(x,y,z,ewFireball,0,d->wdp,0); break;
 	case 35+19:
-		addEwpn(x,y,z,wpn,2,wdp,dir,getUID());
+		addEwpn(x,y,z,wpn,2,wdp,dir,getUID(), 0, fakez);
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 		break;
 		
@@ -12847,9 +12934,9 @@ bool eStalfos::animate(int32_t index)
 		if(dmisc9==e9tROPE && dmisc2==e2tBOMBCHU && !fired && (hp<=0 && !immortal) && hp>-1000 && wpn>wEnemyWeapons)
 		{
 			hp=-1000;
-//        weapon *ew=new weapon(x,y,z, ewBomb, 0, d->wdp, dir);
 			weapon *ew=new weapon(x,y,z, wpn, 0, dmisc4, dir,-1,getUID(),false);
 			Ewpns.add(ew);
+			ew->fakez = fakez;
 			
 			if(wpn==ewSBomb || wpn==ewBomb)
 			{
@@ -12873,21 +12960,21 @@ bool eStalfos::animate(int32_t index)
 				}
 				
 				dummy_bool[0]=true;
-				addEwpn(x,y,z,wpn2,0,dmisc4,up, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,up, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,down, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,down, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,left, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,left, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,right, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,right, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,l_up, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,l_up, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,r_up, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,r_up, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,l_down, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,l_down, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-				addEwpn(x,y,z,wpn2,0,dmisc4,r_down, getUID());
+				addEwpn(x,y,z,wpn2,0,dmisc4,r_down, getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 				sfx(wpnsfx(wpn2),pan(int32_t(x)));
 			}
@@ -12967,7 +13054,7 @@ bool eStalfos::animate(int32_t index)
 			superman=0;
 			fading=0;
 			
-			if(flags2&cmbflag_armos && z==0)
+			if(flags2&cmbflag_armos && z==0 && fakez == 0)
 		{
 		//if a custom size (not 16px by 16px)
 			
@@ -13026,7 +13113,7 @@ bool eStalfos::animate(int32_t index)
 		}
 		else return enemy::animate(index);
 	}
-	else if(flags2&cmbflag_armos && z==0 && clk==0)
+	else if(flags2&cmbflag_armos && z==0 && fakez == 0 && clk==0)
 		removearmos(x,y);
 		
 	
@@ -13114,6 +13201,7 @@ bool eStalfos::animate(int32_t index)
 								{
 								weapon *ew=new weapon(x,y,z, wpn+dmisc3, 0, dmisc4, dir,-1,getUID());
 								Ewpns.add(ew);
+								ew->fakez = fakez;
 								
 								if(wpn==ewSBomb || wpn==ewBomb)
 								{
@@ -13129,6 +13217,7 @@ bool eStalfos::animate(int32_t index)
 								{
 								weapon *ew=new weapon(x,y,z, wpn, 0, dmisc4, dir,-1,getUID());
 								Ewpns.add(ew);
+								ew->fakez = fakez;
 								
 								if(wpn==ewSBomb || wpn==ewBomb)
 								{
@@ -13154,6 +13243,7 @@ bool eStalfos::animate(int32_t index)
 								
 								weapon *ew=new weapon(x,y,z, wpn2, 0, dmisc4, dir,-1,getUID());
 								Ewpns.add(ew);
+								ew->fakez = fakez;
 								
 								if(wpn2==ewSBomb || wpn2==ewBomb)
 								{
@@ -13315,7 +13405,7 @@ bool eStalfos::animate(int32_t index)
 	// Fire Zol
 	if(wpn && dmisc1==e1tEACHTILE && clk2==1 && !hclk)
 	{
-		addEwpn(x,y,z,wpn,0,wdp,dir, getUID());
+		addEwpn(x,y,z,wpn,0,wdp,dir, getUID(), 0, fakez);
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 		
 		int32_t i=Ewpns.Count()-1;
@@ -13331,7 +13421,7 @@ bool eStalfos::animate(int32_t index)
 	else if(wpn==ewBrang && clk2==1 && sclk==0 && !stunclk && !frozenclock && !watch && wpn && !WeaponOut())
 	{
 		misc=index+100;
-		Ewpns.add(new weapon(x,y,z,wpn,misc,wdp,dir, -1,getUID(),false));
+		Ewpns.add(new weapon(x,y-fakez,z,wpn,misc,wdp,dir, -1,getUID(),false));
 		((weapon*)Ewpns.spr(Ewpns.Count()-1))->dummy_bool[0]=false;
 		
 		if(dmisc1==2)
@@ -13393,6 +13483,7 @@ bool eStalfos::animate(int32_t index)
 				if(!fired&&(clk5>=38))
 				{
 					Ewpns.add(new weapon(x,y,z, wpn, 0, wdp, dir, -1,getUID(),false));
+					((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 					sfx(wpnsfx(wpn),pan(int32_t(x)));
 					fired=true;
 				}
@@ -13537,6 +13628,25 @@ void eStalfos::drawshadow(BITMAP *dest, bool translucent)
 		
 		yofs+=shadowdistance;
 		yofs+=8;
+	}
+	if((dmisc9 == e9tPOLSVOICE || dmisc9==e9tVIRE) && !get_bit(quest_rules,qr_POLVIRE_NO_SHADOW))
+	{
+		flip = 0;
+		int32_t fdiv = frate/4;
+		int32_t efrate = fdiv == 0 ? 0 : clk/fdiv;
+		
+		int32_t f2=get_bit(quest_rules,qr_NEWENEMYTILES)?
+			   efrate:((clk>=(frate>>1))?1:0);
+		shadowtile = wpnsbuf[spr_shadow].newtile;
+		
+		if(get_bit(quest_rules,qr_NEWENEMYTILES))
+		{
+			shadowtile+=f2;
+		}
+		else
+		{
+			shadowtile+=f2?1:0;
+		}
 	}
 	if(!shadow_overpit(this))
 		enemy::drawshadow(dest, translucent);
@@ -13699,7 +13809,8 @@ void eStalfos::vire_hop()
 		
 		if(get_bit(quest_rules,qr_ENEMIESZAXIS) && !(isSideViewGravity()))
 		{
-			z=h;
+			if (moveflags & FLAG_USE_FAKE_Z) fakez=h;
+			else z=h;
 		}
 		else
 		{
@@ -13888,9 +13999,38 @@ bool eKeese::animate(int32_t index)
 	// Keese Tribbles stay on the ground, so there's no problem when they transform.
 	else if(get_bit(quest_rules,qr_ENEMIESZAXIS) && !(isSideViewGravity()))
 	{
-		z=int32_t(step/zslongToFix(dstep*100));
-		// Some variance in keese flight heights when away from Hero
-		z+=int32_t(step*zc_max(zfix(0),(distance(x,y,HeroX(),HeroY())-128)/10));
+		if (get_bit(quest_rules,qr_OLD_KEESE_Z_AXIS))
+		{
+			if (moveflags & FLAG_USE_FAKE_Z)
+			{
+				fakez=int32_t(step/zslongToFix(dstep*100));
+				// Some variance in keese flight heights when away from Hero
+				fakez+=int32_t(step*zc_max(zfix(0),(distance(x,y,HeroX(),HeroY())-128)/10));
+
+			}
+			else
+			{
+				z=int32_t(step/zslongToFix(dstep*100));
+				// Some variance in keese flight heights when away from Hero
+				z+=int32_t(step*zc_max(zfix(0),(distance(x,y,HeroX(),HeroY())-128)/10));
+			}
+		}
+		else
+		{
+			if (moveflags & FLAG_USE_FAKE_Z)
+			{
+				fakez=int32_t(step/zslongToFix(dstep*100));
+				// Some variance in keese flight heights when away from Hero
+				fakez+=int32_t(step*zc_max(zfix(0),(distance(x,y,HeroX(),HeroY())-40)/4));
+
+			}
+			else
+			{
+				z=int32_t(step/zslongToFix(dstep*100));
+				// Some variance in keese flight heights when away from Hero
+				z+=int32_t(step*zc_max(zfix(0),(distance(x,y,HeroX(),HeroY())-40)/4));
+			}
+		}
 	}
 	
 	return enemy::animate(index);
@@ -13901,12 +14041,14 @@ void eKeese::drawshadow(BITMAP *dest, bool translucent)
 	int32_t tempy=yofs;
 	flip = 0;
 	shadowtile = wpnsbuf[spr_shadow].newtile+posframe;
-	yofs+=8;
 	
+	yofs+=zc_min(int32_t(step/zslongToFix(dstep*10)), 8);
 	if(!get_bit(quest_rules,qr_ENEMIESZAXIS))
+	{
 		yofs+=int32_t(step/zslongToFix(dstep*10));
+	}
 	
-	if(!shadow_overpit(this))
+	if(!shadow_overpit(this) && (!get_bit(quest_rules,qr_ENEMIESZAXIS) || step > 0))
 		enemy::drawshadow(dest, translucent);
 	yofs=tempy;
 }
@@ -14158,26 +14300,26 @@ void eWizzrobe::wizzrobe_attack_for_real()
 		
 	if(dmisc2 == 0)  //normal weapon
 	{
-		addEwpn(x,y,z,wpn,0,wdp,dir,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,dir,getUID(), 0, fakez);
 		sfx(WAV_WAND,pan(int32_t(x)));
 	}
 	else if(dmisc2 == 1) // ring of fire
 	{
-		addEwpn(x,y,z,wpn,0,wdp,up,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,up,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,down,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,down,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,left,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,left,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,right,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,right,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,l_up,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,l_up,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,r_up,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,r_up,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,l_down,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,l_down,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
-		addEwpn(x,y,z,wpn,0,wdp,r_down,getUID());
+		addEwpn(x,y,z,wpn,0,wdp,r_down,getUID(), 0, fakez);
 		((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 		sfx(WAV_FIRE,pan(int32_t(x)));
 	if (get_bit(quest_rules, qr_8WAY_SHOT_SFX)) sfx(WAV_FIRE,pan(int32_t(x))); 
@@ -14263,7 +14405,14 @@ void eWizzrobe::wizzrobe_attack_for_real()
 					if(!m_walkflag(x2,y2,0, dir) && (abs(x2-Hero.getX())>=32 || abs(y2-Hero.getY())>=32))
 					{
 						if(addchild(x2,y2,get_bit(quest_rules,qr_ENEMIESZAXIS) ? 64 : 0,id2,-10, this->script_UID))
+						{
 							((enemy*)guys.spr(kids+i))->count_enemy = false;
+							if (get_bit(quest_rules,qr_ENEMIESZAXIS) && (((enemy*)guys.spr(kids+i))->moveflags & FLAG_USE_FAKE_Z)) 
+							{
+								((enemy*)guys.spr(kids+i))->fakez = 64;
+								((enemy*)guys.spr(kids+i))->z = 0;
+							}
+						}
 							
 						summoned=true;
 						break;
@@ -14898,9 +15047,9 @@ bool eAquamentus::animate(int32_t index)
 //    addEwpn(fbx,y,z,ewFireball,0,d->wdp,up+1);
 //    addEwpn(fbx,y,z,ewFireball,0,d->wdp,0);
 //    addEwpn(fbx,y,z,ewFireball,0,d->wdp,down+1);
-		addEwpn(fbx,y,z,wpn,2,wdp,up,getUID());
-		addEwpn(fbx,y,z,wpn,2,wdp,8,getUID());
-		addEwpn(fbx,y,z,wpn,2,wdp,down,getUID());
+		addEwpn(fbx,y,z,wpn,2,wdp,up,getUID(), 0, fakez);
+		addEwpn(fbx,y,z,wpn,2,wdp,8,getUID(), 0, fakez);
+		addEwpn(fbx,y,z,wpn,2,wdp,down,getUID(), 0, fakez);
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 	}
 	
@@ -15126,16 +15275,16 @@ bool eGohma::animate(int32_t index)
 		switch(dmisc1)
 		{
 		case 1:
-			addEwpn(x,y+2,z,wpn,3,wdp,left,getUID());
-			addEwpn(x,y+2,z,wpn,3,wdp,8,getUID());
-			addEwpn(x,y+2,z,wpn,3,wdp,right,getUID());
+			addEwpn(x,y+2,z,wpn,3,wdp,left,getUID(), 0, fakez);
+			addEwpn(x,y+2,z,wpn,3,wdp,8,getUID(), 0, fakez);
+			addEwpn(x,y+2,z,wpn,3,wdp,right,getUID(), 0, fakez);
 			sfx(wpnsfx(wpn),pan(int32_t(x)));
 			break;
 			
 		default:
 			if(dmisc1 != 1 && dmisc1 != 2)
 			{
-				addEwpn(x,y+2,z,wpn,3,wdp,8,getUID());
+				addEwpn(x,y+2,z,wpn,3,wdp,8,getUID(), 0, fakez);
 				sfx(wpnsfx(wpn),pan(int32_t(x)));
 				sfx(wpnsfx(wpn),pan(int32_t(x)));
 			}
@@ -15900,7 +16049,7 @@ bool eGanon::animate(int32_t index) //DO NOT ADD a check for do_animation to thi
 	case 0:
 		if(++clk2>72 && !(zc_oldrand()&3))
 		{
-			addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+			addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 			sfx(wpnsfx(wpn),pan(int32_t(x)));
 			clk2=0;
 		}
@@ -17304,7 +17453,7 @@ bool esManhandla::animate(int32_t index)
 	
 	if(!(zc_oldrand()&127))
 	{
-		addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+		addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 		sfx(wpnsfx(wpn),pan(int32_t(x)));
 	}
 	
@@ -17513,7 +17662,7 @@ bool eGleeok::animate(int32_t index)
 		{
 			int32_t i=zc_oldrand()%misc;
 			enemy *head = ((enemy*)guys.spr(index+i+1));
-			addEwpn(head->x,head->y,head->z,wpn,3,wdp,dir,getUID());
+			addEwpn(head->x,head->y,head->z,wpn,3,wdp,dir,getUID(), 0, head->fakez);
 			sfx(wpnsfx(wpn),pan(int32_t(x)));
 			clk2=0;
 		}
@@ -18557,7 +18706,7 @@ bool ePatra::animate(int32_t index)
 								}
 								if (((esPatra*)guys.spr(i))->clk5 == -16 && (((esPatra*)guys.spr(i))->clk4 % 12) == 0)
 								{
-									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 									sfx(wpnsfx(wpn),pan(int32_t(x)));
 								}
 								break;
@@ -18574,7 +18723,7 @@ bool ePatra::animate(int32_t index)
 									}
 									else
 									{
-										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 										sfx(wpnsfx(wpn),pan(int32_t(x)));
 										int32_t m=Ewpns.Count()-1;
 										weapon *ew = (weapon*)(Ewpns.spr(m));
@@ -18587,7 +18736,7 @@ bool ePatra::animate(int32_t index)
 								}
 								if (((esPatra*)guys.spr(i))->clk5 == -16)
 								{
-									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 									sfx(wpnsfx(wpn),pan(int32_t(x)));
 									int32_t m=Ewpns.Count()-1;
 									weapon *ew = (weapon*)(Ewpns.spr(m));
@@ -18606,7 +18755,7 @@ bool ePatra::animate(int32_t index)
 								}
 								if (((esPatra*)guys.spr(i))->clk5 == -16)
 								{
-									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 									sfx(wpnsfx(wpn),pan(int32_t(x)));
 								}
 								break;
@@ -18623,7 +18772,7 @@ bool ePatra::animate(int32_t index)
 									}
 									else
 									{
-										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 										sfx(wpnsfx(wpn),pan(int32_t(x)));
 										((esPatra*)guys.spr(i))->clk5 = 0;
 										clk5 = 0;
@@ -18632,7 +18781,7 @@ bool ePatra::animate(int32_t index)
 								}
 								if ((editorflags & ENEMY_FLAG3) && get_bit(quest_rules,qr_NEWENEMYTILES) && ((esPatra*)guys.spr(i))->clk5 == -16)
 								{
-									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, guys.spr(i)->fakez);
 									sfx(wpnsfx(wpn),pan(int32_t(x)));
 								}
 								break;
@@ -18651,7 +18800,7 @@ bool ePatra::animate(int32_t index)
 									}
 									else
 									{
-										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+										addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, fakez);
 										sfx(wpnsfx(wpn),pan(int32_t(x)));
 										((esPatra*)guys.spr(i))->clk5 = 0;
 										if (editorflags & ENEMY_FLAG6) clk4 = 16;
@@ -18659,7 +18808,7 @@ bool ePatra::animate(int32_t index)
 								}
 								if ((editorflags & ENEMY_FLAG3) && get_bit(quest_rules,qr_NEWENEMYTILES) && ((esPatra*)guys.spr(i))->clk5 == -16)
 								{
-									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID());
+									addEwpn(guys.spr(i)->x,guys.spr(i)->y,guys.spr(i)->z,wpn,3,wdp,dir,getUID(), 0, fakez);
 									sfx(wpnsfx(wpn),pan(int32_t(x)));
 								}
 								break;
@@ -18699,18 +18848,22 @@ void ePatra::FirePatraWeapon()
 			if (dmisc28 != patrat4SHOTRAND || (zc_oldrand()%2)) //if it's the 4 shot rand type, only let it through half the time. Break is within so it doesn't do both, but if it skips this one it'll always do the other one.
 			{
 				Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,l_up,-1, getUID(),false));
+				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 				if (wpn != ewFlame && wpn != ewFlame2)  ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= .707; //Fire already does this internall for asome bizarre reason.
 				
 				Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,l_down,-1, getUID(),false));
+				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 				if (wpn != ewFlame && wpn != ewFlame2)  ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= .707; //Fire already does this internall for asome bizarre reason.
 				
 				Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,r_up,-1, getUID(),false));
+				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 				if (wpn != ewFlame && wpn != ewFlame2)  ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= .707; //Fire already does this internall for asome bizarre reason.
 				
 				Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,r_down,-1, getUID(),false));
+				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 				if (wpn != ewFlame && wpn != ewFlame2)  ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= .707; //Fire already does this internall for asome bizarre reason.
 				
@@ -18720,37 +18873,41 @@ void ePatra::FirePatraWeapon()
 			[[fallthrough]];
 		case patrat4SHOTCARD: //Stalfos 3
 			Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,up,-1, getUID(),false));
+			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 			Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,down,-1, getUID(),false));
+			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 			Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,left,-1, getUID(),false));
+			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 			Ewpns.add(new weapon(x+xoff,y+yoff,z,wpn,1,wdp,right,-1, getUID(),false));
+			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 			((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->moveflags &= ~FLAG_CAN_PITFALL; //No falling in pits
 			break;
 		
 		default:
-			addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+			addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 			if (dmisc28 == patratBREATH) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle += (zc_rand(20,-20)/100.0)*PI;
 			double anglestore = ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle;
 			if (dmisc28 == patrat1SHOTFAST || dmisc28 == patrat3SHOTFAST || dmisc28 == patrat5SHOTFAST) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= 2;
 			if (dmisc28 == patrat3SHOT || dmisc28 == patrat3SHOTFAST || dmisc28 == patrat5SHOT || dmisc28 == patrat5SHOTFAST)
 			{
-				addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+				addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle = anglestore + (double)0.46364761;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step += 0.1180;
 				if (dmisc28 == patrat3SHOTFAST || dmisc28 == patrat5SHOTFAST) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= 2;
-				addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+				addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle = anglestore - (double)0.46364761;
 				((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step += 0.1180;
 				if (dmisc28 == patrat3SHOTFAST || dmisc28 == patrat5SHOTFAST) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= 2;
 				if (dmisc28 == patrat5SHOT || dmisc28 == patrat5SHOTFAST)
 				{
-					addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+					addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 					((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle = anglestore + (double)0.78539816;
 					((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step += 0.4142;
 					if (dmisc28 == patrat5SHOTFAST) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= 2;
-					addEwpn(x,y,z,wpn,3,wdp,dir,getUID());
+					addEwpn(x,y,z,wpn,3,wdp,dir,getUID(), 0, fakez);
 					((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->angle = anglestore - (double)0.78539816;
 					((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step += 0.4142;
 					if (dmisc28 == patrat5SHOTFAST) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->step *= 2;
@@ -19307,10 +19464,11 @@ void esPatraBS::draw(BITMAP *dest)
 /**********  Misc Code  ***********/
 /**********************************/
 
-void addEwpn(int32_t x,int32_t y,int32_t z,int32_t id,int32_t type,int32_t power,int32_t dir, int32_t parentid, byte script_generated)
+void addEwpn(int32_t x,int32_t y,int32_t z,int32_t id,int32_t type,int32_t power,int32_t dir, int32_t parentid, byte script_generated, int32_t fakez)
 {
 	if(id>wEnemyWeapons || (id >= wScript1 && id <= wScript10))
 		Ewpns.add(new weapon((zfix)x,(zfix)y,(zfix)z,id,type,power,dir, -1, parentid, script_generated));
+	if (fakez > 0) ((weapon*)(Ewpns.spr(Ewpns.Count()-1)))->fakez = fakez;
 }
 
 int32_t hit_enemy(int32_t index, int32_t wpnId,int32_t power,int32_t wpnx,int32_t wpny,int32_t dir, int32_t enemyHitWeapon)
@@ -19363,6 +19521,19 @@ void kill_em_all()
 	}
 }
 
+bool can_kill_em_all()
+{
+	for(int32_t i=0; i<guys.Count(); i++)
+	{
+		enemy *e = ((enemy*)guys.spr(i));
+		
+		if(e->flags&(1<<3) && !(e->family == eeGHINI && e->dmisc1 == 1)) continue;
+		if(e->superman) continue;
+		return true;
+	}
+	return false;
+}
+
 //This needs a quest rule, or enemy flag, Dying Enemy Doesn't  Hurt Hero
 // For Hero's hit detection. Don't count them if they are stunned or are guys.
 int32_t GuyHit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz)
@@ -19382,12 +19553,24 @@ int32_t GuyHit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_
 	return -1;
 }
 
+int32_t GuyHitFrom(int32_t index,int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz)
+{
+	for(int32_t i=zc_max(0, index); i<guys.Count(); i++)
+	{
+		if(guys.spr(i)->hit(tx,ty,tz,txsz,tysz,tzsz))
+		{
+			return i;
+		}
+	}
+   
+	return -1;
+}
+
 // For Hero's hit detection. Count them if they are dying.
 int32_t GuyHit(int32_t index,int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz)
 {
 	enemy *e = (enemy*)guys.spr(index);
-	
-	if(e->hp > 0)
+	if(!e || e->hp > 0)
 		return -1;
 		
 	bool d = e->dying;
@@ -19801,7 +19984,7 @@ int32_t addchild(int32_t x,int32_t y,int32_t z,int32_t id,int32_t clk, int32_t p
 	
 	if(z && canfall(id))
 	{
-		e->z = (zfix)z;
+		 e->z = (zfix)z;
 	}
 	
 	((enemy*)e)->ceiling = (z && canfall(id));
@@ -22759,6 +22942,8 @@ void putmsg()
 	bool oldmargin = get_bit(quest_rules,qr_OLD_STRING_EDITOR_MARGINS)!=0;
 	if(!msgorig) msgorig=msgstr;
 	
+	if(wait_advance && linkedmsgclk < 1)
+		linkedmsgclk = 1;
 	if(linkedmsgclk>0)
 	{
 		if(linkedmsgclk==1)
@@ -22766,10 +22951,10 @@ void putmsg()
 			if(do_end_str||cAbtn()||cBbtn())
 			{
 				do_end_str = false;
+				linkedmsgclk = 0;
 				if(wait_advance)
 				{
 					wait_advance = false;
-					linkedmsgclk = 0;
 				}
 				else
 				{
@@ -23544,11 +23729,13 @@ void roaming_item()
 						}
 					}
 					items.spr(i)->z = guys.spr(guycarryingitem)->z;
+					items.spr(i)->fakez = guys.spr(guycarryingitem)->fakez;
 				}
 				else
 				{
 					items.spr(i)->x = guys.spr(guycarryingitem)->x;
 					items.spr(i)->y = guys.spr(guycarryingitem)->y - 2;
+					items.spr(i)->fakez = guys.spr(guycarryingitem)->fakez;
 				}
 			}
 		}
