@@ -75,7 +75,8 @@ void sprite::alloc_scriptmem()
 sprite::sprite()
 {
     uid = getNextUID();
-    x=y=z=tile=shadowtile=cs=flip=c_clk=clk=xofs=yofs=zofs=hxofs=hyofs=fall=0;
+	isspawning = false;
+    x=y=z=tile=shadowtile=cs=flip=c_clk=clk=xofs=yofs=shadowxofs=shadowyofs=zofs=hxofs=hyofs=fall=fakefall=fakez=0;
     txsz=1;
     tysz=1;
     id=-1;
@@ -168,6 +169,7 @@ sprite::sprite()
 	glowRad = 0;
 	glowShape = 0;
 	switch_hooked = false;
+	can_flicker = true;
 	spr_shadow = iwShadow;
 	spr_death = iwDeath;
 	spr_spawn = iwSpawn;
@@ -181,6 +183,7 @@ sprite::sprite(sprite const & other):
     x(other.x),
     y(other.y),
     z(other.z),
+    fakez(other.fakez),
     fall(other.fall),
     tile(other.tile),
     shadowtile(other.shadowtile),
@@ -254,10 +257,12 @@ spr_spawn(other.spr_spawn),
 spr_death_anim_clk(other.spr_death_anim_clk),
 spr_death_anim_frm(other.spr_death_anim_frm),
 spr_spawn_anim_clk(other.spr_spawn_anim_clk),
-spr_spawn_anim_frm(other.spr_spawn_anim_frm)
+spr_spawn_anim_frm(other.spr_spawn_anim_frm),
+can_flicker(other.can_flicker)
 
 {
     uid = getNextUID();
+	isspawning = other.isspawning;
     
     for(int32_t i=0; i<10; ++i)
     {
@@ -375,6 +380,7 @@ sprite::sprite(zfix X,zfix Y,int32_t T,int32_t CS,int32_t F,int32_t Clk,int32_t 
 	glowRad = 0;
 	glowShape = 0;
 	switch_hooked = false;
+	can_flicker = true;
 	
 	//Defaults for old hardcoded sprites
 	spr_shadow = iwShadow;
@@ -435,6 +441,11 @@ int32_t sprite::real_y(zfix fy)
 }
 
 int32_t sprite::real_z(zfix fz)
+{
+    return fz.getInt();
+}
+
+int32_t sprite::fake_z(zfix fz)
 {
     return fz.getInt();
 }
@@ -530,16 +541,18 @@ int32_t sprite::check_pits() //Returns combo ID of pit fallen into; 0 for not fa
 		ispitbl = getpitfall(x,y+15);
 		ispitur = getpitfall(x+15,y);
 		ispitbr = getpitfall(x+15,y+15);
-		ispitul_50 = getpitfall(x+8,y+8);
-		ispitbl_50 = getpitfall(x+8,y+7);
-		ispitur_50 = getpitfall(x+7,y+8);
-		ispitbr_50 = getpitfall(x+7,y+7);
+		ispitul_50 = getpitfall(x+7,y+7);
+		ispitbl_50 = getpitfall(x+7,y+8);
+		ispitur_50 = getpitfall(x+8,y+7);
+		ispitbr_50 = getpitfall(x+8,y+8);
 		int32_t dir = -1;
-		switch((ispitul?1:0) + (ispitur?1:0) + (ispitbl?1:0) + (ispitbr?1:0))
+		size_t cnt = (ispitul?1:0) + (ispitur?1:0) + (ispitbl?1:0) + (ispitbr?1:0);
+		switch(cnt)
 		{
 			case 4:
 			{
 				fallclk = PITFALL_FALL_FRAMES; //Fall
+				has_fallen = true;
 				old_cset = cs;
 				return ispitul_50 ? ispitul_50 : ispitul;
 			}
@@ -690,7 +703,7 @@ int32_t sprite::check_pits() //Returns combo ID of pit fallen into; 0 for not fa
 		if(ispitur) return ispitur;
 		if(ispitbl) return ispitbl;
 		if(ispitbr) return ispitbr;
-		fall = old_fall; //sanity check
+		fallclk = old_fall; //sanity check
 	}
 	return 0;
 }
@@ -946,7 +959,7 @@ int32_t sprite::check_water() //Returns combo ID of water fallen into; 0 for not
 		if(ispitur) return ispitur;
 		if(ispitbl) return ispitbl;
 		if(ispitbr) return ispitbr;
-		fall = old_drown; //sanity check
+		fallclk = old_drown; //sanity check
 	}
 	return 0;
 }
@@ -961,7 +974,7 @@ bool sprite::hit(sprite *s)
     {
     }
     
-    return hit(s->x+s->hxofs,s->y+s->hyofs,s->z+s->zofs,s->hxsz,s->hysz,s->hzsz);
+    return hit(s->x+s->hxofs,s->y+s->hyofs-s->fakez,s->z+s->zofs,s->hxsz,s->hysz,s->hzsz);
 }
 
 bool sprite::hit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz2,int32_t tysz2,int32_t tzsz2)
@@ -971,11 +984,11 @@ bool sprite::hit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz2,int32_t tysz2,in
     if(id<0 || clk<0) return false;
     
     return tx+txsz2>x+hxofs &&
-           ty+tysz2>y+hyofs &&
+           ty+tysz2>y+hyofs-fakez &&
            tz+tzsz2>z+zofs &&
            
            tx<x+hxofs+hxsz &&
-           ty<y+hyofs+hysz &&
+           ty<y+hyofs+hysz-fakez &&
            tz<z+zofs+hzsz;
 }
 
@@ -984,7 +997,7 @@ int32_t sprite::hitdir(int32_t tx,int32_t ty,int32_t txsz2,int32_t tysz2,int32_t
     if(!(scriptcoldet&1) || fallclk || drownclk) return 0xFF;
     
     int32_t cx1=x+hxofs+(hxsz>>1);
-    int32_t cy1=y+hyofs+(hysz>>1);
+    int32_t cy1=y+hyofs+(hysz>>1)-fakez;
     int32_t cx2=tx+(txsz2>>1);
     int32_t cy2=ty+(tysz2>>1);
     
@@ -1131,6 +1144,7 @@ void sprite::draw(BITMAP* dest)
 	}
 	int32_t sx = real_x(x+xofs);
 	int32_t sy = real_y(y+yofs)-real_z(z+zofs);
+	sy -= fake_z(fakez);
 	
     
 	if(id<0)
@@ -1561,7 +1575,7 @@ void sprite::draw(BITMAP* dest)
 	}
     
 	if(show_hitboxes && !is_zquest())
-		rect(dest,x+hxofs,y+playing_field_offset+hyofs-(z+zofs),x+hxofs+hxsz-1,(y+playing_field_offset+hyofs+hysz-(z+zofs))-1,vc((id+16)%255));
+		rect(dest,x+hxofs,y+playing_field_offset+hyofs-(z+zofs)-fakez,x+hxofs+hxsz-1,(y+playing_field_offset+hyofs+hysz-(z+zofs)-fakez)-1,vc((id+16)%255));
 
 	if ( sprBMP2 ) 
 	{
@@ -1583,6 +1597,7 @@ void sprite::drawzcboss(BITMAP* dest)
     
     int32_t sx = real_x(x+xofs);
     int32_t sy = real_y(y+yofs)-real_z(z+zofs);
+    sy -= fake_z(fakez);
     
     if(id<0)
         return;
@@ -1931,13 +1946,14 @@ void sprite::drawzcboss(BITMAP* dest)
     }
     
     if(show_hitboxes && !is_zquest())
-        rect(dest,x+hxofs,y+playing_field_offset+hyofs-(z+zofs),x+hxofs+hxsz-1,(y+playing_field_offset+hyofs+hysz-(z+zofs))-1,vc((id+16)%255));
+        rect(dest,x+hxofs,y+playing_field_offset+hyofs-(z+zofs)-fakez,x+hxofs+hxsz-1,(y+playing_field_offset+hyofs+hysz-(z+zofs)-fakez)-1,vc((id+16)%255));
 }
 
 void sprite::draw8(BITMAP* dest)
 {
     int32_t sx = real_x(x+xofs);
     int32_t sy = real_y(y+yofs)-real_z(z+zofs);
+	sy -= fake_z(fakez);
     
     if(id<0)
         return;
@@ -1961,6 +1977,7 @@ void sprite::drawcloaked(BITMAP* dest)
 {
     int32_t sx = real_x(x+xofs);
     int32_t sy = real_y(y+yofs)-real_z(z+zofs);
+    sy -= fake_z(fakez);
     
     if(id<0)
         return;
@@ -2010,7 +2027,7 @@ void sprite::drawcloaked(BITMAP* dest)
     }
     
     if(get_debug() && key[KEY_O])
-        rectfill(dest,x+hxofs,sy+hyofs,x+hxofs+hxsz-1,sy+hyofs+hysz-1,vc(id));
+        rectfill(dest,x+hxofs,sy+hyofs-fakez,x+hxofs+hxsz-1,sy+hyofs+hysz-fakez-1,vc(id));
 }
 
 void sprite::drawshadow(BITMAP* dest,bool translucent)
@@ -2020,8 +2037,8 @@ void sprite::drawshadow(BITMAP* dest,bool translucent)
 		return;
 	}
 	
-	int32_t sx = real_x(x+xofs)+(txsz-1)*8;
-	int32_t sy = real_y(y+yofs+(tysz-1)*16);
+	int32_t sx = real_x(x+xofs+shadowxofs)+(txsz-1)*8;
+	int32_t sy = real_y(y+yofs+shadowyofs)+(tysz-1)*16;
 	//int32_t sy1 = sx-56; //subscreen offset
 	//if ( ispitfall(x+xofs, y+yofs+16) || ispitfall(x+xofs+8, y+yofs+16) || ispitfall(x+xofs+15, y+yofs+16)  ) return;
 	//sWTF, why is this offset by half the screen. Can't do this right now. Sanity. -Z
@@ -2031,8 +2048,6 @@ void sprite::drawshadow(BITMAP* dest,bool translucent)
 	{
 		if(clk>=0)
 		{
-			//zprint2("shadow sx: %d, sy: %d\n", sx, sy);
-			//zprint2("enemy x: %d, y: %d\n", x.getInt(), y.getInt());
 			if(translucent)
 			{
 				overtiletranslucent16(dest,shadowtile,sx,sy,shadowcs,shadowflip,128);
@@ -2500,7 +2515,7 @@ void sprite::explode(int32_t type)
                     {
                         if(type==0)  // Twilight
                         {
-                            particles.add(new pTwilight(x+j, y-z+i, 5, 0, 0, (zc_oldrand()%8)+i*4));
+                            particles.add(new pTwilight(x+j, y-z-fakez+i, 5, 0, 0, (zc_oldrand()%8)+i*4));
                             int32_t k=particles.Count()-1;
                             particle *p = (particles.at(k));
                             p->step=3;
@@ -2510,7 +2525,7 @@ void sprite::explode(int32_t type)
                         
 			else if(type ==1)  // Sands of Hours
                         {
-                            particles.add(new pTwilight(x+j, y-z+i, 5, 1, 2, (zc_oldrand()%16)+i*2));
+                            particles.add(new pTwilight(x+j, y-z-fakez+i, 5, 1, 2, (zc_oldrand()%16)+i*2));
                             int32_t k=particles.Count()-1;
                             particle *p = (particles.at(k));
                             p->step=4;
@@ -2523,7 +2538,7 @@ void sprite::explode(int32_t type)
                         }
                         else //explode
                         {
-                            particles.add(new pFaroresWindDust(x+j, y-z+i, 5, 6, spritetilebuf[i*16+j], zc_oldrand()%96));
+                            particles.add(new pFaroresWindDust(x+j, y-z-fakez+i, 5, 6, spritetilebuf[i*16+j], zc_oldrand()%96));
                             
                             int32_t k=particles.Count()-1;
                             particle *p = (particles.at(k));
@@ -2541,6 +2556,14 @@ void sprite::explode(int32_t type)
 	
 }
 
+bool sprite::getCanFlicker()
+{
+	return can_flicker;
+}
+void sprite::setCanFlicker(bool v)
+{
+	can_flicker = v;
+}
 
 
 /*

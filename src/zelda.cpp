@@ -434,6 +434,7 @@ gamedata *game=NULL;
 script_data *ffscripts[NUMSCRIPTFFC];
 script_data *itemscripts[NUMSCRIPTITEM];
 script_data *globalscripts[NUMSCRIPTGLOBAL];
+script_data *genericscripts[NUMSCRIPTSGENERIC];
 script_data *guyscripts[NUMSCRIPTGUYS];
 script_data *wpnscripts[NUMSCRIPTWEAPONS];
 script_data *lwpnscripts[NUMSCRIPTWEAPONS];
@@ -1193,6 +1194,18 @@ void Z_scripterrlog(const char * const format,...)
 					CConsoleLoggerEx::COLOR_BACKGROUND_BLACK),"Global script %u (%s): \n", 
 					curScriptNum+1, globalmap[curScriptNum].scriptname.c_str()); }
 				break;
+			case SCRIPT_GENERIC:
+				al_trace("Generic Script %u (%s): ", curScriptNum+1, genericmap[curScriptNum].scriptname.c_str());
+				if ( zscript_debugger ) {zscript_coloured_console.cprintf((CConsoleLoggerEx::COLOR_GREEN | CConsoleLoggerEx::COLOR_INTENSITY | 
+					CConsoleLoggerEx::COLOR_BACKGROUND_BLACK),"Generic Script %u (%s): \n", 
+					curScriptNum+1, genericmap[curScriptNum].scriptname.c_str()); }
+				break;
+			case SCRIPT_GENERIC_FROZEN:
+				al_trace("Generic Script (FRZ) %u (%s): ", curScriptNum+1, genericmap[curScriptNum].scriptname.c_str());
+				if ( zscript_debugger ) {zscript_coloured_console.cprintf((CConsoleLoggerEx::COLOR_GREEN | CConsoleLoggerEx::COLOR_INTENSITY | 
+					CConsoleLoggerEx::COLOR_BACKGROUND_BLACK),"Generic Script (FRZ) %u (%s): \n", 
+					curScriptNum+1, genericmap[curScriptNum].scriptname.c_str()); }
+				break;
 	
 			case SCRIPT_PLAYER:
 				al_trace("Hero script %u (%s): ", curScriptNum, playermap[curScriptNum-1].scriptname.c_str());
@@ -1424,6 +1437,10 @@ zfix  HeroZ()
 {
     return Hero.getZ();
 }
+zfix  HeroFakeZ()
+{
+    return Hero.getFakeZ();
+}
 int32_t  HeroHClk()
 {
     return Hero.getHClk();
@@ -1506,12 +1523,12 @@ void StunGuy(int32_t j,int32_t stun)
 {
     if(stun<=0) return;
     
-    if(((enemy*)guys.spr(j))->z==0 && canfall(((enemy*)guys.spr(j))->id))
+    if(((enemy*)guys.spr(j))->z==0 && ((enemy*)guys.spr(j))->fakez==0 && canfall(((enemy*)guys.spr(j))->id))
     {
         ((enemy*)guys.spr(j))->stunclk=zc_min(360,stun*4);
         ((enemy*)guys.spr(j))->fall=-zc_min(FEATHERJUMP,(stun*8)+zc_oldrand()%5);
     }
-    else if(((enemy*)guys.spr(j))->z==0 && ((enemy*)guys.spr(j))->family == eeLEV && get_bit(quest_rules, qr_QUAKE_STUNS_LEEVERS))
+    else if(((enemy*)guys.spr(j))->z==0 && ((enemy*)guys.spr(j))->fakez==0 && ((enemy*)guys.spr(j))->family == eeLEV && get_bit(quest_rules, qr_QUAKE_STUNS_LEEVERS))
     {
         ((enemy*)guys.spr(j))->stunclk=zc_min(360,stun*4);
     }
@@ -1884,6 +1901,9 @@ int32_t init_game()
 	*/
 	//Copy saved data to RAM data (but not global arrays)
 	game->Copy(saves[currgame]);
+	game->load_genscript();
+	genscript_timing = SCR_TIMING_START_FRAME;
+	timeExitAllGenscript(GENSCR_ST_RELOAD);
 	flushItemCache();
 	ResetSaveScreenSettings();
 	
@@ -2102,6 +2122,8 @@ int32_t init_game()
 		}
 	}
 	
+	timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+	timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 	previous_DMap = currdmap = warpscr = worldscr=game->get_continue_dmap();
 	init_dmap();
 	
@@ -2473,7 +2495,6 @@ int32_t init_game()
 	FFCore.initZScriptItemScripts(); //Call again so we're set up for GLOBAL_SCRIPT_GAME
 	FFCore.initZScriptActiveSubscreenScript();
 	ffscript_engine(true);  //Here is a much safer place...
-	
 	return 0;
 }
 
@@ -2481,6 +2502,7 @@ int32_t cont_game()
 {
 	//  introclk=intropos=msgclk=msgpos=dmapmsgclk=0;
 	FFCore.init();
+	timeExitAllGenscript(GENSCR_ST_CONTINUE);
 	didpit=false;
 	Hero.unfreeze();
 	Hero.reset_hookshot();
@@ -2504,6 +2526,10 @@ int32_t cont_game()
 	  dlevel = DMaps[0].level;
 	  }
 	  */
+	if(currdmap != lastentrance_dmap)
+		timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+	if(dlevel != DMaps[lastentrance_dmap].level)
+		timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 	currdmap = lastentrance_dmap;
 	homescr = currscr = lastentrance;
 	currmap = DMaps[currdmap].map;
@@ -2580,7 +2606,6 @@ int32_t cont_game()
 	//  for(int32_t i=0; i<128; i++)
 	//	key[i]=0;
 	
-	//Run onContGame script -V
 	initZScriptGlobalScript(GLOBAL_SCRIPT_ONCONTGAME);
 	ZScriptVersion::RunScript(SCRIPT_GLOBAL, GLOBAL_SCRIPT_ONCONTGAME, GLOBAL_SCRIPT_ONCONTGAME);	
 	FFCore.deallocateAllArrays(SCRIPT_GLOBAL, GLOBAL_SCRIPT_ONCONTGAME);
@@ -2619,7 +2644,6 @@ int32_t cont_game()
 			Hero.ganon_intro();
 		}
 	}
-	
 	return 0;
 }
 
@@ -2630,7 +2654,12 @@ void restart_level()
 	
 	if(dlevel && !get_bit(quest_rules,qr_LEVEL_RESTART_CONT_POINT))
 	{
+		if(currdmap != lastentrance_dmap)
+			timeExitAllGenscript(GENSCR_ST_CHANGE_DMAP);
+		if(dlevel != DMaps[lastentrance_dmap].level)
+			timeExitAllGenscript(GENSCR_ST_CHANGE_LEVEL);
 		currdmap = lastentrance_dmap;
+		dlevel = DMaps[currdmap].level;
 		homescr = currscr = lastentrance;
 		init_dmap();
 	}
@@ -2835,6 +2864,7 @@ void do_magic_casting()
         {
             Lwpns.add(new weapon(HeroX(),HeroY(),HeroZ(),wPhantom,pDINSFIREROCKET,0,up, magicitem, Hero.getUID()));
             weapon *w1 = (weapon*)(Lwpns.spr(Lwpns.Count()-1));
+	    w1->fakez = HeroFakeZ();
             w1->step=4;
             //          Hero.tile=(BSZ)?32:29;
             herotile(&Hero.tile, &Hero.flip, &Hero.extend, Hero.IsSideSwim()?ls_sidewaterhold2:ls_landhold2, Hero.getDir(), zinit.heroAnimationStyle);
@@ -2851,6 +2881,7 @@ void do_magic_casting()
         {
             Lwpns.add(new weapon((zfix)HeroX(),(zfix)(-32),(zfix)HeroZ(),wPhantom,pDINSFIREROCKETRETURN,0,down, magicitem, Hero.getUID()));
             weapon *w1 = (weapon*)(Lwpns.spr(Lwpns.Count()-1));
+	    w1->fakez = HeroFakeZ();
             w1->step=4;
             //          Hero.tile=29;
             herotile(&Hero.tile, &Hero.flip, &Hero.extend, Hero.IsSideSwim()?ls_sidewaterhold2:ls_landhold2, Hero.getDir(), zinit.heroAnimationStyle);
@@ -2884,6 +2915,7 @@ void do_magic_casting()
                 Lwpns.add(new weapon((zfix)HeroX(),(zfix)HeroY(),(zfix)HeroZ(),wFire,itemsbuf[magicitem].fam_type,itemsbuf[magicitem].power*game->get_hero_dmgmult(),
                                      isSideViewGravity() ? (flamecounter<flamemax ? left : right) : 0, magicitem, Hero.getUID(), false, 0, 0, 0, itemsbuf[magicitem].family));
                 weapon *w = (weapon*)(Lwpns.spr(Lwpns.Count()-1));
+		w->fakez = HeroFakeZ();
                 w->step=(itemsbuf[magicitem].misc2/100.0);
                 w->angular=true;
                 w->angle=(flamecounter*PI/(flamemax/2.0));
@@ -3049,9 +3081,11 @@ void do_magic_casting()
             int32_t d=zc_max(HeroX(),256-HeroX())+32;
             Lwpns.add(new weapon((zfix)(HeroX()-d),(zfix)HeroY(),(zfix)HeroZ(),wPhantom,pNAYRUSLOVEROCKETRETURN1,0,right, magicitem,Hero.getUID()));
             weapon *w1 = (weapon*)(Lwpns.spr(Lwpns.Count()-1));
+	    w1->fakez = HeroFakeZ();
             w1->step=4;
             Lwpns.add(new weapon((zfix)(HeroX()+d),(zfix)HeroY(),(zfix)HeroZ(),wPhantom,pNAYRUSLOVEROCKETRETURN2,0,left, magicitem,Hero.getUID()));
             w1 = (weapon*)(Lwpns.spr(Lwpns.Count()-1));
+	    w1->fakez = HeroFakeZ();
             w1->step=4;
             //          Hero.tile=29;
             herotile(&Hero.tile, &Hero.flip, &Hero.extend, Hero.IsSideSwim()?ls_sideswimcast:ls_cast, Hero.getDir(), zinit.heroAnimationStyle);
@@ -3332,6 +3366,7 @@ void game_loop()
 	while(true)
 	{
 		GameFlags &= ~GAMEFLAG_RESET_GAME_LOOP;
+		genscript_timing = SCR_TIMING_START_FRAME;
 		if((pause_in_background && callback_switchin && midi_patch_fix))
 		{
 			if(currmidi!=0)
@@ -3388,12 +3423,18 @@ void game_loop()
 		clear_to_color(darkscr_bmp_scrollscr, game->get_darkscr_color());
 		clear_to_color(darkscr_bmp_scrollscr_trans, game->get_darkscr_color());
 		
+		
 		// Three kinds of freezes: freeze, freezemsg, freezeff
 		
 		// freezemsg if message is being printed && qr_MSGFREEZE is on,
 		// or if a message is being prepared && qr_MSGDISAPPEAR is on.
 		bool freezemsg = ((msg_active || (intropos && intropos<72) || (linkedmsgclk && get_bit(quest_rules,qr_MSGDISAPPEAR)))
 			&& (get_bit(quest_rules,qr_MSGFREEZE)));
+		if(!freezemsg)
+		{
+			if ( !FFCore.system_suspend[susptSCRIPDRAWCLEAR] ) script_drawing_commands.Clear();
+		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_START_FRAME);
 		
 		if(fadeclk>=0 && !freezemsg)
 		{
@@ -3436,15 +3477,12 @@ void game_loop()
 		al_trace("game_loop is calling: %s\n", "animate_combos()\n");
 		#endif
 		if ( !FFCore.system_suspend[susptCOMBOANIM] ) animate_combos();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_COMBO_ANIM);
 		#if LOGGAMELOOP > 0
 		al_trace("game_loop is calling: %s\n", "load_control_state()\n");
 		#endif
 		if ( !FFCore.system_suspend[susptCONTROLSTATE] ) load_control_state();
-		
-		if(!freezemsg)
-		{
-			if ( !FFCore.system_suspend[susptSCRIPDRAWCLEAR] ) script_drawing_commands.Clear();
-		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_POLL_INPUT);
 		
 		if(!freezeff)
 		{
@@ -3452,27 +3490,33 @@ void game_loop()
 			update_freeform_combos();
 		}
 		
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_FFCS);
 		// Arbitrary Rule 637: neither 'freeze' nor 'freezeff' freeze the global script.
 		if(!FFCore.system_suspend[susptGLOBALGAME] && !freezemsg && (g_doscript & (1<<GLOBAL_SCRIPT_GAME)))
 		{
 			ZScriptVersion::RunScript(SCRIPT_GLOBAL, GLOBAL_SCRIPT_GAME, GLOBAL_SCRIPT_GAME);
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_GLOBAL_ACTIVE);
 		if(!FFCore.system_suspend[susptHEROACTIVE] && !freezemsg && player_doscript && FFCore.getQuestHeaderInfo(vZelda) >= 0x255)
 		{
 			ZScriptVersion::RunScript(SCRIPT_PLAYER, SCRIPT_PLAYER_ACTIVE, SCRIPT_PLAYER_ACTIVE);
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_PLAYER_ACTIVE);
 		if(!FFCore.system_suspend[susptDMAPSCRIPT] && !freezemsg && dmap_doscript && FFCore.getQuestHeaderInfo(vZelda) >= 0x255)
 		{
 			ZScriptVersion::RunScript(SCRIPT_DMAP, DMaps[currdmap].script,currdmap);
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DMAPDATA_ACTIVE);
 		if(!FFCore.system_suspend[susptDMAPSCRIPT] && !freezemsg && passive_subscreen_doscript && FFCore.getQuestHeaderInfo(vZelda) >= 0x255)
 		{
 			ZScriptVersion::RunScript(SCRIPT_PASSIVESUBSCREEN, DMaps[currdmap].passive_sub_script,currdmap);
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DMAPDATA_PASSIVESUBSCREEN);
 		if ( !FFCore.system_suspend[susptCOMBOSCRIPTS] && !freezemsg && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
 			FFCore.combo_script_engine(false);    
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_COMBOSCRIPT);
 		
 		
 		if(!freeze && !freezemsg)
@@ -3481,10 +3525,12 @@ void game_loop()
 			al_trace("game_loop is calling: %s\n", "mblock2.animate()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptMOVINGBLOCKS] )  mblock2.animate(0);
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_PUSHBLOCK);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is calling: %s\n", "items.animate()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptITEMSPRITESCRIPTS] )  FFCore.itemSpriteScriptEngine();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_ITEMSPRITE_SCRIPT);
 			if ( !FFCore.system_suspend[susptITEMS] ) items.animate();
 		
 			//Can't be called in items.animate(), as ZQuest also uses this function.
@@ -3492,10 +3538,12 @@ void game_loop()
 			al_trace("game_loop is calling: %s\n", "items.check_conveyor()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptCONVEYORSITEMS] ) items.check_conveyor();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_ITEMSPRITE_ANIMATE);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is calling: %s\n", "guys.animate()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptGUYS] ) guys.animate();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_NPC_ANIMATE);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is calling: %s\n", "roaming_item()\n");
 			#endif
@@ -3508,7 +3556,9 @@ void game_loop()
 			al_trace("game_loop is calling: %s\n", "Ewpns.animate()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptEWEAPONS] ) Ewpns.animate();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_EWPN_ANIMATE);
 			if ( !FFCore.system_suspend[susptEWEAPONSCRIPTS] ) FFCore.eweaponScriptEngine();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_EWPN_SCRIPT);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is setting: %s\n", "checkhero=true()\n");
 			#endif
@@ -3521,6 +3571,7 @@ void game_loop()
 			
 			if ( get_bit(quest_rules, qr_OLD_ITEMDATA_SCRIPT_TIMING) && !FFCore.system_suspend[susptITEMSCRIPTENGINE] )
 				FFCore.itemScriptEngine(); //run before lweapon scripts
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_OLD_ITEMDATA_SCRIPT);
 			if ( !FFCore.system_suspend[susptHERO] )
 			{
 				for(int32_t i = 0; i < (gofast ? 8 : 1); i++)
@@ -3543,8 +3594,10 @@ void game_loop()
 				}
 				if(GameFlags & GAMEFLAG_RESET_GAME_LOOP) continue; //continue the game_loop while(true)
 			}
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_PLAYER_ANIMATE);
 			if ( !get_bit(quest_rules, qr_OLD_ITEMDATA_SCRIPT_TIMING) && !FFCore.system_suspend[susptITEMSCRIPTENGINE] )
 				FFCore.itemScriptEngine(); //run before lweapon scripts
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_NEW_ITEMDATA_SCRIPT);
 			
 			//FFCore.itemScriptEngine(); //run before lweapon scripts
 			#if LOGGAMELOOP > 0
@@ -3552,12 +3605,14 @@ void game_loop()
 			#endif
 			Hero.cleanupByrna(); //Prevent sfx glitches with Cane of Byrna if it fails to initialise; ported from 2.53. -Z
 			if ( !FFCore.system_suspend[susptMAGICCAST] ) do_magic_casting();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_CASTING);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is calling: %s\n", "Lwpns.animate()\n");
 			#endif
 			//perhaps add sprite.waitdraw, and call sprite script here too?
 			//FFCore.lweaponScriptEngine();
 			if ( !FFCore.system_suspend[susptLWEAPONS] ) Lwpns.animate();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_LWPN_ANIMATE);
 			
 			//FFCore.lweaponScriptEngine();
 			#if LOGGAMELOOP > 0
@@ -3572,6 +3627,7 @@ void game_loop()
 			al_trace("game_loop is calling: %s\n", "particles.animate()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptPARTICLES] ) particles.animate();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DECOPARTICLE_ANIMATE);
 			#if LOGGAMELOOP > 0
 			al_trace("game_loop is calling: %s\n", "update_hookshot()\n");
 			#endif
@@ -3595,75 +3651,91 @@ void game_loop()
 			al_trace("game_loop is calling: %s\n", "cycle_palette()\n");
 			#endif
 			if ( !FFCore.system_suspend[susptPALCYCLE] ) cycle_palette();
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_COLLISIONS_PALETTECYCLE);
 		}
 		else if(freezemsg)
 		{
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_ITEMSPRITE_ANIMATE);
 			for(int32_t i=0; i<guys.Count(); i++)
-		{
-				if(((enemy*)guys.spr(i))->ignore_msg_freeze())
 			{
+				if(((enemy*)guys.spr(i))->ignore_msg_freeze())
+				{
 					if ( !FFCore.system_suspend[susptGUYS] ) guys.spr(i)->animate(i);
+				}
 			}
-			}
+			FFCore.runGenericPassiveEngine(SCR_TIMING_POST_NPC_ANIMATE);
 		}
 		#if LOGGAMELOOP > 0
 		al_trace("game_loop at: %s\n", "if(global_wait)\n");
 		#endif
+		FFCore.runGenericPassiveEngine(SCR_TIMING_WAITDRAW);
 		if( !FFCore.system_suspend[susptGLOBALGAME] && (global_wait & (1<<GLOBAL_SCRIPT_GAME)) )
 		{
 			ZScriptVersion::RunScript(SCRIPT_GLOBAL, GLOBAL_SCRIPT_GAME, GLOBAL_SCRIPT_GAME);
 			global_wait &= ~(1<<GLOBAL_SCRIPT_GAME);
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_GLOBAL_WAITDRAW);
 		if ( !FFCore.system_suspend[susptHEROACTIVE] && player_waitdraw && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
 			ZScriptVersion::RunScript(SCRIPT_PLAYER, SCRIPT_PLAYER_ACTIVE, SCRIPT_PLAYER_ACTIVE);
 			player_waitdraw = false;
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_PLAYER_WAITDRAW);
 		if ( !FFCore.system_suspend[susptDMAPSCRIPT] && dmap_waitdraw && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
 			ZScriptVersion::RunScript(SCRIPT_DMAP, DMaps[currdmap].script,currdmap);
 			dmap_waitdraw = false;
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DMAPDATA_ACTIVE_WAITDRAW);
 		if ( (!( FFCore.system_suspend[susptDMAPSCRIPT] )) && passive_subscreen_waitdraw && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
 			ZScriptVersion::RunScript(SCRIPT_PASSIVESUBSCREEN, DMaps[currdmap].passive_sub_script,currdmap);
 			passive_subscreen_waitdraw = false;
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DMAPDATA_PASSIVESUBSCREEN_WAITDRAW);
 		
 		
 		if ( !FFCore.system_suspend[susptSCREENSCRIPTS] && tmpscr->script != 0 && tmpscr->doscript && tmpscr->screen_waitdraw && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
-		ZScriptVersion::RunScript(SCRIPT_SCREEN, tmpscr->script, 0);  
-		tmpscr->screen_waitdraw = 0;	    
+			ZScriptVersion::RunScript(SCRIPT_SCREEN, tmpscr->script, 0);  
+			tmpscr->screen_waitdraw = 0;	    
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_SCREEN_WAITDRAW);
 		
 		for ( int32_t q = 0; q < 32; ++q )
 		{
-		//Z_scripterrlog("tmpscr->ffcswaitdraw is: %d\n", tmpscr->ffcswaitdraw);
-		if ( tmpscr->ffcswaitdraw&(1<<q) )
-		{
-			//Z_scripterrlog("FFC (%d) called Waitdraw()\n", q);
-			if(tmpscr->ffscript[q] != 0 && !FFCore.system_suspend[susptFFCSCRIPTS] )
+			//Z_scripterrlog("tmpscr->ffcswaitdraw is: %d\n", tmpscr->ffcswaitdraw);
+			if ( tmpscr->ffcswaitdraw&(1<<q) )
 			{
-				ZScriptVersion::RunScript(SCRIPT_FFC, tmpscr->ffscript[q], q);
-				tmpscr->ffcswaitdraw &= ~(1<<q);
+				//Z_scripterrlog("FFC (%d) called Waitdraw()\n", q);
+				if(tmpscr->ffscript[q] != 0 && !FFCore.system_suspend[susptFFCSCRIPTS] )
+				{
+					ZScriptVersion::RunScript(SCRIPT_FFC, tmpscr->ffscript[q], q);
+					tmpscr->ffcswaitdraw &= ~(1<<q);
+				}
 			}
 		}
-		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_FFC_WAITDRAW);
 		
 		if ( !FFCore.system_suspend[susptCOMBOSCRIPTS] && FFCore.getQuestHeaderInfo(vZelda) >= 0x255 )
 		{
 			FFCore.combo_script_engine(false, true);    
 		}
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_COMBO_WAITDRAW);
 		
 		//Waitdraw for item scripts. 
 		if ( !FFCore.system_suspend[susptITEMSCRIPTENGINE] ) FFCore.itemScriptEngineOnWaitdraw();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_ITEM_WAITDRAW);
 		
 		//Sprite scripts on Waitdraw in order of : npc, ewpn, lwpn, itemsprite
 		if ( !FFCore.system_suspend[susptNPCSCRIPTS] ) FFCore.npcScriptEngineOnWaitdraw();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_NPC_WAITDRAW);
 		if ( !FFCore.system_suspend[susptEWEAPONSCRIPTS] ) FFCore.eweaponScriptEngineOnWaitdraw();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_EWPN_WAITDRAW);
 		if ( !FFCore.system_suspend[susptLWEAPONSCRIPTS] ) FFCore.lweaponScriptEngineOnWaitdraw();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_LWPN_WAITDRAW);
 		if ( !FFCore.system_suspend[susptITEMSPRITESCRIPTS] ) FFCore.itemSpriteScriptEngineOnWaitdraw();
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_ITEMSPRITE_WAITDRAW);
 		
 		
 		
@@ -3672,7 +3744,8 @@ void game_loop()
 		#if LOGGAMELOOP > 0
 		al_trace("game_loop is calling: %s\n", "draw_screen()\n");
 		#endif
-		if ( !FFCore.system_suspend[susptSCREENDRAW] ) draw_screen(tmpscr);
+		if ( !FFCore.system_suspend[susptSCREENDRAW] ) draw_screen(tmpscr,true,true);
+		else FFCore.runGenericPassiveEngine(SCR_TIMING_POST_DRAW);
 		
 		//clear Hero's last hits 
 		//for ( int32_t q = 0; q < 4; q++ ) Hero.sethitHeroUID(q, 0); //Clearing these here makes checking them fail both before and after waitdraw. 
@@ -3721,6 +3794,8 @@ void game_loop()
 			set_clip_state(msg_portrait_display_buf, 1);
 			//    clear_bitmap(pricesdisplaybuf);
 		}
+		
+		FFCore.runGenericPassiveEngine(SCR_TIMING_POST_STRINGS);
 		
 		if(!freeze)
 		{
@@ -3861,6 +3936,7 @@ void game_loop()
 			// Other effects in zc_sys.cpp
 		}
 		
+		FFCore.runGenericPassiveEngine(SCR_TIMING_END_FRAME);
 		//  putpixel(framebuf, walkflagx, walkflagy+playing_field_offset, vc(int32_t(zc_oldrand()%16)));
 		break;
 	}
@@ -5437,6 +5513,7 @@ int32_t main(int32_t argc, char* argv[])
 		setup_combo_animations();
 		setup_combo_animations2();
 		
+		clear_bitmap(lightbeam_bmp);
 		while(Quit<=0)
 		{
 #ifdef _WIN32
@@ -5993,6 +6070,128 @@ void __zc_always_assert(bool e, const char* expression, const char* file, int32_
         allegro_message("%s", buf);
         //exit(-1); //flashing lights are probably enough.
     }
+}
+
+
+bool checkCost(int32_t ctr, int32_t amnt)
+{
+	if(!game) return true;
+	if(amnt <= 0) return true;
+	switch (ctr)
+	{
+		case crMONEY: //rupees
+		{
+			if ( current_item_power(itype_wallet) ) return true;
+			break;
+		}
+		case crMAGIC: //magic
+		{
+			if (get_bit(quest_rules,qr_ENABLEMAGIC))
+			{
+				return (((current_item_power(itype_magicring) > 0)
+					 ? game->get_maxmagic()
+					 : game->get_magic()+game->get_dmagic())>=amnt*game->get_magicdrainrate());
+			}
+			return true;
+		}
+		case crARROWS:
+		{
+			if(current_item_power(itype_quiver))
+				return true;
+			if(!get_bit(quest_rules,qr_TRUEARROWS))
+				return checkCost(crMONEY, amnt);
+			break;
+		}
+		case crBOMBS:
+		{
+			if(current_item_power(itype_bombbag))
+				return true;
+			break;
+		}
+		case crSBOMBS:
+		{
+			if(current_item_power(itype_bombbag)
+				&& itemsbuf[current_item_id(itype_bombbag)].flags & ITEM_FLAG1)
+				return true;
+			break;
+		}
+	}
+	return (game->get_counter(ctr)+game->get_dcounter(ctr)>=amnt);
+}
+bool checkmagiccost(int32_t itemid)
+{
+	if(itemid < 0)
+	{
+		return false;
+	}
+	itemdata const& id = itemsbuf[itemid];
+	return checkCost(id.cost_counter[0], id.cost_amount[0])
+		&& checkCost(id.cost_counter[1], id.cost_amount[1]);
+}
+
+void payCost(int32_t ctr, int32_t amnt, int32_t tmr, bool ignoreTimer)
+{
+	if(!game) return;
+	if(!amnt) return;
+	if(tmr > 0 && !ignoreTimer && (frame%tmr))
+		return;
+	bool cost = amnt > 0;
+	switch(ctr)
+	{
+		case crMAGIC:
+		{
+			if(!get_bit(quest_rules,qr_ENABLEMAGIC))
+				return;
+			if(cost && current_item_power(itype_magicring) > 0)
+				return;
+			if(cost)
+				amnt *= game->get_magicdrainrate();
+			break;
+		}
+		case crMONEY:
+		{
+			if(!cost) break;
+			if ( current_item_power(itype_wallet) )
+				return;
+			if(get_bit(quest_rules,qr_OLDINFMAGIC) && current_item_power(itype_magicring) > 0)
+				return;
+			break;
+		}
+		case crARROWS:
+		{
+			if(cost && current_item_power(itype_quiver))
+				return;
+			if(!get_bit(quest_rules,qr_TRUEARROWS))
+				return payCost(crMONEY, amnt, tmr, ignoreTimer);
+			break;
+		}
+		case crBOMBS:
+		{
+			if(cost && current_item_power(itype_bombbag))
+				return;
+			break;
+		}
+		case crSBOMBS:
+		{
+			if(cost && current_item_power(itype_bombbag)
+				&& itemsbuf[current_item_id(itype_bombbag)].flags & ITEM_FLAG1)
+				return;
+			break;
+		}
+	}
+	game->change_counter(-amnt, ctr);
+}
+void paymagiccost(int32_t itemid, bool ignoreTimer)
+{
+	if(itemid < 0)
+	{
+		return;
+	}
+	itemdata const& id = itemsbuf[itemid];
+	if(!(id.flags&ITEM_VALIDATEONLY))
+		payCost(id.cost_counter[0], id.cost_amount[0], id.magiccosttimer[0], ignoreTimer);
+	if(!(id.flags&ITEM_VALIDATEONLY2))
+		payCost(id.cost_counter[1], id.cost_amount[1], id.magiccosttimer[1], ignoreTimer);
 }
 
 

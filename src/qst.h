@@ -109,6 +109,7 @@ struct script_slot_data
 
 extern std::map<int32_t, script_slot_data > ffcmap;
 extern std::map<int32_t, script_slot_data > globalmap;
+extern std::map<int32_t, script_slot_data > genericmap;
 extern std::map<int32_t, script_slot_data > itemmap;
 extern std::map<int32_t, script_slot_data > npcmap;
 extern std::map<int32_t, script_slot_data > ewpnmap;
@@ -162,7 +163,7 @@ enum
     skip_weapons, skip_colors, skip_icons, skip_initdata,
     skip_guys, skip_herosprites, skip_subscreens, skip_ffscript,
     skip_sfx, skip_midis, skip_cheats, skip_itemdropsets,
-    skip_favorites, skip_max
+    skip_favorites, skip_zinfo, skip_max
 };
 
 extern const char *qst_error[];

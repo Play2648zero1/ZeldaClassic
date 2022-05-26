@@ -133,6 +133,7 @@ void centerHero();
 zfix  HeroX();
 zfix  HeroY();
 zfix  HeroZ();
+zfix  HeroFakeZ();
 int32_t  HeroHClk();
 int32_t  HeroNayrusLoveShieldClk();
 int32_t  HeroHoverClk();
@@ -445,7 +446,7 @@ extern char   sig_str[44];
 extern script_data *ffscripts[NUMSCRIPTFFC];
 extern script_data *itemscripts[NUMSCRIPTITEM];
 extern script_data *globalscripts[NUMSCRIPTGLOBAL];
-
+extern script_data *genericscripts[NUMSCRIPTSGENERIC];
 extern script_data *guyscripts[NUMSCRIPTGUYS];
 extern script_data *wpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *lwpnscripts[NUMSCRIPTWEAPONS];

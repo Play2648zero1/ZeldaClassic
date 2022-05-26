@@ -94,6 +94,7 @@ extern char                *byte_conversion2(int32_t number1, int32_t number2, i
 string				             zScript;
 std::map<int32_t, script_slot_data > ffcmap;
 std::map<int32_t, script_slot_data > globalmap;
+std::map<int32_t, script_slot_data > genericmap;
 std::map<int32_t, script_slot_data > itemmap;
 std::map<int32_t, script_slot_data > npcmap;
 std::map<int32_t, script_slot_data > ewpnmap;
@@ -115,6 +116,8 @@ const std::string script_slot_data::DISASSEMBLED_FORMAT = "%s ++%s";
 const std::string script_slot_data::ZASM_FORMAT = "%s ==%s";
 
 char qstdat_string[2048] = { 0 };
+
+static zinfo* load_tmp_zi = NULL;
 
 int32_t memDBGwatch[8]= {0,0,0,0,0,0,0,0}; //So I can monitor memory crap
 const byte clavio[9]={97,109,111,110,103,117,115,0};
@@ -3580,6 +3583,29 @@ int32_t readrules(PACKFILE *f, zquestheader *Header, bool keepdata)
 		set_bit(quest_rules,qr_OLD_HALF_MAGIC,1);
 	}
 	
+	if(compatrule_version < 24)
+	{
+		set_bit(quest_rules,qr_WARPS_RESTART_DMAPSCRIPT,1);
+		set_bit(quest_rules,qr_DMAP_0_CONTINUE_BUG,1);
+	}
+	
+	if(compatrule_version < 25)
+	{
+		if (get_bit(quest_rules, qr_OLD_FAIRY_LIMIT)) set_bit(quest_rules,qr_OLD_FAIRY_LIMIT,0);
+		else set_bit(quest_rules,qr_OLD_FAIRY_LIMIT,1);
+		set_bit(quest_rules,qr_OLD_SCRIPTED_KNOCKBACK,1);
+	}
+	if(compatrule_version < 26)
+	{
+		set_bit(quest_rules,qr_OLD_KEESE_Z_AXIS,1);
+		set_bit(quest_rules,qr_POLVIRE_NO_SHADOW,1);
+	}
+	
+	if(compatrule_version < 26)
+	{
+		set_bit(quest_rules,qr_SUBSCR_OLD_SELECTOR,1);
+	}
+	
 	//always set
 	set_bit(quest_rules,qr_ANIMATECUSTOMWEAPONS,0);
 	if (s_version < 16) set_bit(quest_rules,qr_BROKEN_HORIZONTAL_WEAPON_ANIM,1);
@@ -6210,19 +6236,17 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
         }
     }
     
-    if(keepdata)
-    {
-        for(int32_t i=0; i<MAXITEMS; i++)
-        {
-            memset(&itemsbuf[i], 0, sizeof(itemdata));
-            itemsbuf[i].power=itemsbuf[i].flags=itemsbuf[i].wpn=itemsbuf[i].wpn2=itemsbuf[i].wpn3=
-                                                    itemsbuf[i].wpn4=itemsbuf[i].pickup_hearts=itemsbuf[i].misc1=
-                                                            itemsbuf[i].misc2=itemsbuf[i].magic=tempitem.usesound=0;
-            itemsbuf[i].count=-1;
-            itemsbuf[i].playsound=WAV_SCALE;
-            reset_itembuf(&itemsbuf[i],i);
-        }
-    }
+	if(keepdata)
+	{
+		for(int32_t i=0; i<MAXITEMS; i++)
+		{
+			itemdata& id = itemsbuf[i];
+			memset(&id, 0, sizeof(itemdata));
+			id.count=-1;
+			id.playsound=WAV_SCALE;
+			reset_itembuf(&id,i);
+		}
+	}
     
     for(int32_t i=0; i<items_to_read; i++)
     {
@@ -6245,7 +6269,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 			}
 		}
 		
-        if(!p_getc(&tempitem.misc,f,true))
+        if(!p_getc(&tempitem.misc_flags,f,true))
         {
             return qe_invalid;
         }
@@ -6564,10 +6588,35 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
                         }
                     }
                     
-                    if(!p_getc(&tempitem.magic,f,true))
-                    {
-                        return qe_invalid;
-                    }
+					if(s_version < 53)
+					{
+						byte tempbyte;
+						if(!p_getc(&tempbyte,f,true))
+						{
+							return qe_invalid;
+						}
+						tempitem.cost_amount[0] = tempbyte;
+						switch(tempitem.family)
+						{
+							case itype_arrow:
+							case itype_bomb:
+							case itype_sbomb:
+								tempitem.cost_amount[1] = 1;
+								break;
+							default:
+								tempitem.cost_amount[1] = 0;
+						}
+					}
+					else
+					{
+						for(auto q = 0; q < 2; ++q)
+						{
+							if(!p_igetw(&tempitem.cost_amount[q],f,true))
+							{
+								return qe_invalid;
+							}
+						}
+					}
                 }
                 else
                 {
@@ -6784,10 +6833,16 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 				{
 					return qe_invalid;
 				}
-				if(!p_igetl(&tempitem.magiccosttimer,f,true))
+				auto num_cost_tmr = (s_version > 52 ? 2 : 1);
+				for(auto q = 0; q < num_cost_tmr; ++q)
 				{
-					return qe_invalid;
+					if(!p_igetl(&tempitem.magiccosttimer[q],f,true))
+					{
+						return qe_invalid;
+					}
 				}
+				for(auto q = num_cost_tmr; q < 2; ++q)
+					tempitem.magiccosttimer[q] = 0;
 			}
 			if ( s_version >= 28 )  //! New itemdata vars for weapon editor. -Z
 			{
@@ -6847,10 +6902,36 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 			}
 			if ( s_version >= 34 )  //! cost counter
 			{
-				//Pickup Type
-				if(!p_getc(&tempitem.cost_counter,f,true))
+				if(s_version < 53)
 				{
-					return qe_invalid;
+					if(!p_getc(&tempitem.cost_counter[0],f,true))
+					{
+						return qe_invalid;
+					}
+					switch(tempitem.family)
+					{
+						case itype_arrow:
+							tempitem.cost_counter[1] = crARROWS;
+							break;
+						case itype_bomb:
+							tempitem.cost_counter[1] = crBOMBS;
+							break;
+						case itype_sbomb:
+							tempitem.cost_counter[1] = crSBOMBS;
+							break;
+						default:
+							tempitem.cost_counter[1] = crNONE;
+					}
+				}
+				else
+				{
+					for(auto q = 0; q < 2; ++q)
+					{
+						if(!p_getc(&tempitem.cost_counter[q],f,true))
+						{
+							return qe_invalid;
+						}
+					}
 				}
 			}
 			if ( s_version >= 44 )  //! cost counter
@@ -6921,7 +7002,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
         else if(zgpmode)
         {
             itemsbuf[i].tile=tempitem.tile;
-            itemsbuf[i].misc=tempitem.misc;
+            itemsbuf[i].misc_flags=tempitem.misc_flags;
             itemsbuf[i].csets=tempitem.csets;
             itemsbuf[i].frames=tempitem.frames;
             itemsbuf[i].speed=tempitem.speed;
@@ -6948,7 +7029,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
                 strcpy(item_string[i],old_item_string[i]);
                 tempitem.tile = itemsbuf[iLetter].tile;
                 tempitem.csets = itemsbuf[iLetter].csets;
-                tempitem.misc = itemsbuf[iLetter].misc;
+                tempitem.misc_flags = itemsbuf[iLetter].misc_flags;
                 tempitem.frames = itemsbuf[iLetter].frames;
                 tempitem.speed = itemsbuf[iLetter].speed;
                 tempitem.ltm = itemsbuf[iLetter].ltm;
@@ -7086,26 +7167,26 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 						break;
 						
 					case iBoots:
-						tempitem.magic = get_bit(deprecated_rules,51) ? 1 : 0;
+						tempitem.cost_amount[0] = get_bit(deprecated_rules,51) ? 1 : 0;
 						tempitem.power=7;
 						break;
 						
 					case iWand:
-						tempitem.magic = get_bit(deprecated_rules,49) ? 8 : 0;
+						tempitem.cost_amount[0] = get_bit(deprecated_rules,49) ? 8 : 0;
 						tempitem.power=2;
 						tempitem.wpn=wWAND;
 						tempitem.wpn3=wMAGIC;
 						break;
 						
 					case iBCandle:
-						tempitem.magic = get_bit(deprecated_rules,50) ? 4 : 0;
+						tempitem.cost_amount[0] = get_bit(deprecated_rules,50) ? 4 : 0;
 						tempitem.power=1;
 						tempitem.flags|=(ITEM_GAMEDATA|ITEM_FLAG1);
 						tempitem.wpn3=wFIRE;
 						break;
 						
 					case iRCandle:
-						tempitem.magic = get_bit(deprecated_rules,50) ? 4 : 0;
+						tempitem.cost_amount[0] = get_bit(deprecated_rules,50) ? 4 : 0;
 						tempitem.power=1;
 						tempitem.wpn3=wFIRE;
 						break;
@@ -7152,13 +7233,13 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 						tempitem.wpn5 = iwNayrusLoveShieldFront;
 						tempitem.wpn10 = iwNayrusLoveShieldBack;
 						tempitem.misc1=512;
-						tempitem.magic=64;
+						tempitem.cost_amount[0]=64;
 						break;
 						
 					case iLens:
 						tempitem.misc1=60;
 						tempitem.flags |= get_bit(quest_rules,qr_ENABLEMAGIC) ? 0 : ITEM_RUPEE_MAGIC;
-						tempitem.magic = get_bit(quest_rules,qr_ENABLEMAGIC) ? 2 : 1;
+						tempitem.cost_amount[0] = get_bit(quest_rules,qr_ENABLEMAGIC) ? 2 : 1;
 						break;
 						
 					case iArrow:
@@ -7179,11 +7260,11 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 						tempitem.wpn4=wDINSFIRES1B;
 						tempitem.misc1 = 32;
 						tempitem.misc2 = 200;
-						tempitem.magic=32;
+						tempitem.cost_amount[0]=32;
 						break;
 						
 					case iFaroresWind:
-						tempitem.magic=32;
+						tempitem.cost_amount[0]=32;
 						break;
 						
 					case iHookshot:
@@ -7222,7 +7303,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 						tempitem.misc1=4;
 						tempitem.misc2=16;
 						tempitem.misc3=1;
-						tempitem.magic=1;
+						tempitem.cost_amount[0]=1;
 						break;
 						
 					case iWhistle:
@@ -7254,7 +7335,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 					case iL2SpinScroll:
 						tempitem.family=itype_spinscroll2;
 						tempitem.fam_type=1;
-						tempitem.magic=8;
+						tempitem.cost_amount[0]=8;
 						tempitem.power=2;
 						tempitem.misc1 = 20;
 						break;
@@ -7270,7 +7351,7 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 						tempitem.power = 2;
 						tempitem.misc1=0x20;
 						tempitem.misc2=192;
-						tempitem.magic=8;
+						tempitem.cost_amount[0]=8;
 						break;
 						
 					case iChargeRing:
@@ -9168,16 +9249,16 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 			{
 				if ( (tempitem.flags & ITEM_RUPEE_MAGIC) )
 				{
-					tempitem.cost_counter = 1;
+					tempitem.cost_counter[0] = 1;
 				}
 				else 
 				{
 					if(get_bit(quest_rules,qr_ENABLEMAGIC))
-						tempitem.cost_counter = 4;
+						tempitem.cost_counter[0] = 4;
 					else
 					{
-						tempitem.magic = 0;
-						tempitem.cost_counter = -1;
+						tempitem.cost_amount[0] = 0;
+						tempitem.cost_counter[0] = -1;
 					}
 				}
 			}
@@ -9225,6 +9306,12 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 				}
 			}
 			
+			if( s_version < 52 )
+			{
+				if( tempitem.family == itype_shield )
+					tempitem.flags |= ITEM_FLAG1; //'Block Front' flag
+			}
+			
 			if(tempitem.fam_type==0)  // Always do this
 				tempitem.fam_type=1;
 				
@@ -9235,19 +9322,30 @@ int32_t readitems(PACKFILE *f, word version, word build, bool keepdata, bool zgp
 	return 0;
 }
 
-
+static bool did_init_def_items = false;
+void init_def_items()
+{
+	if(did_init_def_items) return;
+	did_init_def_items = true;
+	default_items[3].cost_counter[1] = crBOMBS;
+	default_items[13].cost_counter[1] = crARROWS;
+	default_items[14].cost_counter[1] = crARROWS;
+	default_items[48].cost_counter[1] = crBOMBS;
+	default_items[57].cost_counter[1] = crARROWS;
+}
 void reset_itembuf(itemdata *item, int32_t id)
 {
+	init_def_items();
     if(id<iLast)
     {
         // Copy everything *EXCEPT* the tile, misc, cset, frames, speed, delay and ltm.
         word tile = item->tile;
-        byte miscs = item->misc, cset = item->csets, frames = item->frames, speed = item->speed, delay = item->delay;
+        byte miscs = item->misc_flags, cset = item->csets, frames = item->frames, speed = item->speed, delay = item->delay;
         int32_t ltm = item->ltm;
         
         memcpy(item,&default_items[id],sizeof(itemdata));
         item->tile = tile;
-        item->misc = miscs;
+        item->misc_flags = miscs;
         item->csets = cset;
         item->frames = frames;
         item->speed = speed;
@@ -9657,89 +9755,18 @@ const char *ctype_name[cMAX]=
 
 int32_t init_combo_classes()
 {
+	zinfo* zi = (load_tmp_zi ? load_tmp_zi : &ZI);
     for(int32_t i=0; i<cMAX; i++)
     {
         combo_class_buf[i] = default_combo_classes[i];
-	if ( moduledata.combo_type_names[i][0] != NULL )
-	{
-		//al_trace("Copying over a combo type name from a module: %s\n",(char *)moduledata.combo_type_names[i]);
-		for ( int32_t q = 0; q < 64; q++ )
+		if ( char const* nm = zi->getComboTypeName(i) )
 		{
-			combo_class_buf[i].name[q] = moduledata.combo_type_names[i][q];
+			size_t len = strlen(nm);
+			for ( size_t q = 0; q < 64; q++ )
+			{
+				combo_class_buf[i].name[q] = (q<len ? nm[q] : 0);
+			}
 		}
-	}
-	    continue;
-        /*
-            al_trace("===== %03d (%s)=====\n", i, ctype_name[i]);
-            al_trace("name:  %s\n", combo_class_buf[i].name);
-            al_trace("block_enemies:  %d\n", combo_class_buf[i].block_enemies);
-            al_trace("block_hole:  %d\n", combo_class_buf[i].block_hole);
-            al_trace("block_trigger:  %d\n", combo_class_buf[i].block_trigger);
-            for(int32_t j=0; j<32; j++)
-            {
-              al_trace("block_weapon[%d]:  %d\n", j, combo_class_buf[i].block_weapon[j]);
-            }
-            al_trace("conveyor_direction:  %d\n", combo_class_buf[i].conveyor_direction);
-            al_trace("create_enemy:  %d\n", combo_class_buf[i].create_enemy);
-            al_trace("create_enemy_when:  %d\n", combo_class_buf[i].create_enemy_when);
-            al_trace("create_enemy_change:  %ld\n", combo_class_buf[i].create_enemy_change);
-            al_trace("directional_change_type:  %d\n", combo_class_buf[i].directional_change_type);
-            al_trace("distance_change_tiles:  %ld\n", combo_class_buf[i].distance_change_tiles);
-            al_trace("dive_item:  %d\n", combo_class_buf[i].dive_item);
-            al_trace("dock:  %d\n", combo_class_buf[i].dock);
-            al_trace("fairy:  %d\n", combo_class_buf[i].fairy);
-            al_trace("ff_combo_attr_change:  %d\n", combo_class_buf[i].ff_combo_attr_change);
-            al_trace("foot_decorations_tile:  %ld\n", combo_class_buf[i].foot_decorations_tile);
-            al_trace("foot_decorations_type:  %d\n", combo_class_buf[i].foot_decorations_type);
-            al_trace("hookshot_grab_point:  %d\n", combo_class_buf[i].hookshot_grab_point);
-            al_trace("ladder_pass:  %d\n", combo_class_buf[i].ladder_pass);
-            al_trace("lock_block_type:  %d\n", combo_class_buf[i].lock_block_type);
-            al_trace("lock_block_change:  %ld\n", combo_class_buf[i].lock_block_change);
-            al_trace("magic_mirror_type:  %d\n", combo_class_buf[i].magic_mirror_type);
-            al_trace("modify_hp_amount:  %d\n", combo_class_buf[i].modify_hp_amount);
-            al_trace("modify_hp_delay:  %d\n", combo_class_buf[i].modify_hp_delay);
-            al_trace("modify_hp_type:  %d\n", combo_class_buf[i].modify_hp_type);
-            al_trace("modify_mp_amount:  %d\n", combo_class_buf[i].modify_mp_amount);
-            al_trace("modify_mp_delay:  %d\n", combo_class_buf[i].modify_mp_delay);
-            al_trace("modify_mp_type:  %d\n", combo_class_buf[i].modify_mp_type);
-            al_trace("no_push_blocks:  %d\n", combo_class_buf[i].no_push_blocks);
-            al_trace("overhead:  %d\n", combo_class_buf[i].overhead);
-            al_trace("place_enemy:  %d\n", combo_class_buf[i].place_enemy);
-            al_trace("push_direction:  %d\n", combo_class_buf[i].push_direction);
-            al_trace("push_weight:  %d\n", combo_class_buf[i].push_weight);
-            al_trace("push_wait:  %d\n", combo_class_buf[i].push_wait);
-            al_trace("pushed:  %d\n", combo_class_buf[i].pushed);
-            al_trace("raft:  %d\n", combo_class_buf[i].raft);
-            al_trace("reset_room:  %d\n", combo_class_buf[i].reset_room);
-            al_trace("save_point_type:  %d\n", combo_class_buf[i].save_point_type);
-            al_trace("screen_freeze_type:  %d\n", combo_class_buf[i].screen_freeze_type);
-            al_trace("secret_combo:  %d\n", combo_class_buf[i].secret_combo);
-            al_trace("singular:  %d\n", combo_class_buf[i].singular);
-            al_trace("slow_movement:  %d\n", combo_class_buf[i].slow_movement);
-            al_trace("statue_type:  %d\n", combo_class_buf[i].statue_type);
-            al_trace("step_type:  %d\n", combo_class_buf[i].step_type);
-            al_trace("step_change_to:  %ld\n", combo_class_buf[i].step_change_to);
-            for(int32_t j=0; j<32; j++)
-            {
-              al_trace("strike_weapons[%d]:  %d\n", j, combo_class_buf[i].strike_weapons[j]);
-            }
-            al_trace("strike_remnants:  %ld\n", combo_class_buf[i].strike_remnants);
-            al_trace("strike_remnants_type:  %d\n", combo_class_buf[i].strike_remnants_type);
-            al_trace("strike_change:  %ld\n", combo_class_buf[i].strike_change);
-            al_trace("strike_item:  %d\n", combo_class_buf[i].strike_item);
-            al_trace("touch_item:  %d\n", combo_class_buf[i].touch_item);
-            al_trace("touch_stairs:  %d\n", combo_class_buf[i].touch_stairs);
-            al_trace("trigger_type:  %d\n", combo_class_buf[i].trigger_type);
-            al_trace("trigger_sensitive:  %d\n", combo_class_buf[i].trigger_sensitive);
-            al_trace("warp_type:  %d\n", combo_class_buf[i].warp_type);
-            al_trace("warp_sensitive:  %d\n", combo_class_buf[i].warp_sensitive);
-            al_trace("warp_direct:  %d\n", combo_class_buf[i].warp_direct);
-            al_trace("warp_location:  %d\n", combo_class_buf[i].warp_location);
-            al_trace("water:  %d\n", combo_class_buf[i].water);
-            al_trace("whistle:  %d\n", combo_class_buf[i].whistle);
-            al_trace("win_game:  %d\n", combo_class_buf[i].win_game);
-            al_trace("\n\n");
-        */
     }
     
     return 0;
@@ -12256,6 +12283,7 @@ extern script_data *wpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *lwpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *ewpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *globalscripts[NUMSCRIPTGLOBAL];
+extern script_data *genericscripts[NUMSCRIPTSGENERIC];
 extern script_data *playerscripts[NUMSCRIPTPLAYER];
 extern script_data *screenscripts[NUMSCRIPTSCREEN];
 extern script_data *dmapscripts[NUMSCRIPTSDMAP];
@@ -12448,33 +12476,33 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 			globalscripts[GLOBAL_SCRIPT_ONSAVE] = new script_data();
 		}
 		
-	if(s_version > 10) //expanded the number of Player scripts to 5. 
+		if(s_version > 10) //expanded the number of Player scripts to 5. 
 		{
-		for(int32_t i = 0; i < NUMSCRIPTPLAYER; i++)
+			for(int32_t i = 0; i < NUMSCRIPTPLAYER; i++)
+			{
+				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &playerscripts[i], zmeta_version);
+				
+				if(ret != 0) return qe_invalid;
+			}
+		}
+		else
 		{
-			ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &playerscripts[i], zmeta_version);
-			
-			if(ret != 0) return qe_invalid;
-		}
-		}
-	else
-	{
-		for(int32_t i = 0; i < NUMSCRIPTHEROOLD; i++)
-		{
-			ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &playerscripts[i], zmeta_version);
-			
-			if(ret != 0) return qe_invalid;
-		}
-		if(playerscripts[3] != NULL)
+			for(int32_t i = 0; i < NUMSCRIPTHEROOLD; i++)
+			{
+				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &playerscripts[i], zmeta_version);
+				
+				if(ret != 0) return qe_invalid;
+			}
+			if(playerscripts[3] != NULL)
 				delete playerscripts[3];
-				
-		playerscripts[3] = new script_data();
-		
-		if(playerscripts[4] != NULL)
+					
+			playerscripts[3] = new script_data();
+			
+			if(playerscripts[4] != NULL)
 				delete playerscripts[4];
-				
-		playerscripts[4] = new script_data();
-	}
+					
+			playerscripts[4] = new script_data();
+		}
 		if(s_version > 8 && s_version < 10)
 		{
 			
@@ -12492,16 +12520,15 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 			}
 			
 		}
-	if(s_version >= 10)
+		if(s_version >= 10)
 		{
-			
 			for(int32_t i = 0; i < NUMSCRIPTWEAPONS; i++)
 			{
 				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &lwpnscripts[i], zmeta_version);
 				
 				if(ret != 0) return qe_invalid;
 			}
-		for(int32_t i = 0; i < NUMSCRIPTWEAPONS; i++)
+			for(int32_t i = 0; i < NUMSCRIPTWEAPONS; i++)
 			{
 				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &ewpnscripts[i], zmeta_version);
 				
@@ -12515,26 +12542,38 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 			}
 			
 		}
-	if(s_version >=12)
-	{
-		for(int32_t i = 0; i < NUMSCRIPTSITEMSPRITE; i++)
+		if(s_version >=12)
 		{
-			ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &itemspritescripts[i], zmeta_version);
-				
-			if(ret != 0) return qe_invalid;
+			for(int32_t i = 0; i < NUMSCRIPTSITEMSPRITE; i++)
+			{
+				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &itemspritescripts[i], zmeta_version);
+					
+				if(ret != 0) return qe_invalid;
+			}
 		}
-		
-	}
-	if(s_version >=15)
-	{
-		for(int32_t i = 0; i < NUMSCRIPTSCOMBODATA; i++)
+		if(s_version >=15)
 		{
-			ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &comboscripts[i], zmeta_version);
-				
-			if(ret != 0) return qe_invalid;
+			for(int32_t i = 0; i < NUMSCRIPTSCOMBODATA; i++)
+			{
+				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &comboscripts[i], zmeta_version);
+					
+				if(ret != 0) return qe_invalid;
+			}
 		}
-		
-	}
+		if(s_version >19)
+		{
+			word numgenscripts = NUMSCRIPTSGENERIC;
+			if(!p_igetw(&numgenscripts,f,true))
+			{
+				return qe_invalid;
+			}
+			for(int32_t i = 0; i < numgenscripts; i++)
+			{
+				ret = read_one_ffscript(f, Header, keepdata, i, s_version, s_cversion, &genericscripts[i], zmeta_version);
+					
+				if(ret != 0) return qe_invalid;
+			}
+		}
 	
 		/*
 		else //Is this trip really necessary?
@@ -12639,10 +12678,10 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 				delete[] buf;
 			}
 		}
-			//(v9+)
-	//npc scripts
-	if(s_version > 8)
+		//(v9+)
+		if(s_version > 8)
 		{
+			//npc scripts
 			word numnpcbindings;
 			p_igetw(&numnpcbindings, f, true);
 			
@@ -12661,11 +12700,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 					
 				delete[] buf;
 			}
-		}
-	//
-	//lweapon
-	if(s_version > 8)
-		{
+			//lweapon
 			word numlwpnbindings;
 			p_igetw(&numlwpnbindings, f, true);
 			
@@ -12684,10 +12719,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 					
 				delete[] buf;
 			}
-		}
-	//eweapon
-	if(s_version > 8)
-		{
+			//eweapon
 			word numewpnbindings;
 			p_igetw(&numewpnbindings, f, true);
 			
@@ -12706,10 +12738,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 					
 				delete[] buf;
 			}
-		}
-	//hero
-	if(s_version > 8)
-		{
+			//hero
 			word numherobindings;
 			p_igetw(&numherobindings, f, true);
 			
@@ -12728,10 +12757,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 					
 				delete[] buf;
 			}
-		}
-	//dmaps
-	if(s_version > 8)
-		{
+			//dmaps
 			word numdmapbindings;
 			p_igetw(&numdmapbindings, f, true);
 			
@@ -12750,10 +12776,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 					
 				delete[] buf;
 			}
-		}
-		//screen
-	if(s_version > 8)
-		{
+			//screen
 			word numscreenbindings;
 			p_igetw(&numscreenbindings, f, true);
 			
@@ -12773,7 +12796,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 				delete[] buf;
 			}
 		}
-	if(s_version > 11)
+		if(s_version > 11)
 		{
 			word numspritebindings;
 			p_igetw(&numspritebindings, f, true);
@@ -12794,7 +12817,7 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 				delete[] buf;
 			}
 		}
-	if(s_version >= 15)
+		if(s_version >= 15)
 		{
 			word numcombobindings;
 			p_igetw(&numcombobindings, f, true);
@@ -12811,6 +12834,27 @@ int32_t readffscript(PACKFILE *f, zquestheader *Header, bool keepdata)
 				//fix this too
 				if(keepdata && id <NUMSCRIPTSCOMBODATA-1)
 					comboscriptmap[id].scriptname = buf;
+					
+				delete[] buf;
+			}
+		}
+		if(s_version > 19)
+		{
+			word numgenericbindings;
+			p_igetw(&numgenericbindings, f, true);
+			
+			for(int32_t i=0; i<numgenericbindings; i++)
+			{
+				word id;
+				p_igetw(&id, f, true);
+				p_igetl(&bufsize, f, true);
+				buf = new char[bufsize+1];
+				pfread(buf, bufsize, f, true);
+				buf[bufsize]=0;
+				
+				//fix this too
+				if(keepdata && id <NUMSCRIPTSGENERIC-1)
+					genericmap[id].scriptname = buf;
 					
 				delete[] buf;
 			}
@@ -12890,6 +12934,12 @@ void reset_scripts()
     for(int32_t i=0; i<NUMSCRIPTSCOMBODATA; i++)
     {
         if(comboscripts[i]!=NULL) delete comboscripts[i];
+    }
+    
+    for(int32_t i=0; i<NUMSCRIPTSGENERIC; i++)
+    {
+        if(genericscripts[i]!=NULL) delete genericscripts[i];
+        genericscripts[i] = new script_data();
     }
     
     for(int32_t i=0; i<NUMSCRIPTFFC; i++)
@@ -20263,84 +20313,88 @@ int32_t _lq_int(const char *filename, zquestheader *Header, miscQdata *Misc, zct
     }
     
     
-    if(keepall&&!get_bit(skip_flags, skip_ffscript))
-    {
-        zScript.clear();
-        globalmap.clear();
-        ffcmap.clear();
-        itemmap.clear();
-        //new script types
-        //new script types -- prevent carrying over to a quest that you load after reading them
-        //e.g., a quest has an npc script, and you make a blank quest, that now believes that it has an npc script, too!
-        npcmap.clear();
-        ewpnmap.clear();
-        lwpnmap.clear();
-        playermap.clear();
-        dmapmap.clear();
-        screenmap.clear();
-        itemspritemap.clear();
-        comboscriptmap.clear();
-        
-        for(int32_t i=0; i<NUMSCRIPTFFC-1; i++)
-        {
-            ffcmap[i].clear();
-        }
-        
+	if(keepall&&!get_bit(skip_flags, skip_ffscript))
+	{
+		zScript.clear();
+		globalmap.clear();
+		genericmap.clear();
+		ffcmap.clear();
+		itemmap.clear();
+		npcmap.clear();
+		ewpnmap.clear();
+		lwpnmap.clear();
+		playermap.clear();
+		dmapmap.clear();
+		screenmap.clear();
+		itemspritemap.clear();
+		comboscriptmap.clear();
+		
+		for(int32_t i=0; i<NUMSCRIPTFFC-1; i++)
+		{
+			ffcmap[i].clear();
+		}
+		
 		globalmap[0].slotname = "Slot 1:";
 		globalmap[0].scriptname = "~Init";
 		globalmap[0].update();
-        
-        for(int32_t i=1; i<NUMSCRIPTGLOBAL; i++)
-        {
-            globalmap[i].clear();
-        }
-        
-        //globalmap[3] = pair<string,string>("Slot 4: ~Continue", "~Continue");
-        for(int32_t i=0; i<NUMSCRIPTITEM-1; i++)
-        {
-            itemmap[i].clear();
-        }
-        
-        //new script types -- prevent carrying over to a quest that you load after reading them
-        //e.g., a quest has an npc script, and you make a blank quest, that now believes that it has an npc script, too!
-        for(int32_t i=0; i<NUMSCRIPTGUYS-1; i++)
-        {
-            npcmap[i].clear();
-        }
-        for(int32_t i=0; i<NUMSCRIPTWEAPONS-1; i++)
-        {
-            lwpnmap[i].clear();
-        }
-        for(int32_t i=0; i<NUMSCRIPTWEAPONS-1; i++)
-        {
-            ewpnmap[i].clear();
-        }
-        for(int32_t i=0; i<NUMSCRIPTPLAYER-1; i++)
-        {
-            playermap[i].clear();
-        }
-        for(int32_t i=0; i<NUMSCRIPTSDMAP-1; i++)
-        {
-            dmapmap[i].clear();
-        }
-        for(int32_t i=0; i<NUMSCRIPTSCREEN-1; i++)
-        {
-            screenmap[i].clear();
-        }
-	for(int32_t i=0; i<NUMSCRIPTSITEMSPRITE-1; i++)
-        {
-            itemspritemap[i].clear();
-        }
-	for(int32_t i=0; i<NUMSCRIPTSCOMBODATA-1; i++)
-        {
-            comboscriptmap[i].clear();
-        }
-        
-        reset_scripts();
-    }
-    
+		
+		for(int32_t i=1; i<NUMSCRIPTGLOBAL; i++)
+		{
+			globalmap[i].clear();
+		}
+		
+		for(int32_t i=0; i<NUMSCRIPTITEM-1; i++)
+		{
+			itemmap[i].clear();
+		}
+		
+		//new script types -- prevent carrying over to a quest that you load after reading them
+		//e.g., a quest has an npc script, and you make a blank quest, that now believes that it has an npc script, too!
+		for(int32_t i=0; i<NUMSCRIPTGUYS-1; i++)
+		{
+			npcmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTWEAPONS-1; i++)
+		{
+			lwpnmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTWEAPONS-1; i++)
+		{
+			ewpnmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTPLAYER-1; i++)
+		{
+			playermap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTSDMAP-1; i++)
+		{
+			dmapmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTSCREEN-1; i++)
+		{
+			screenmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTSITEMSPRITE-1; i++)
+		{
+			itemspritemap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTSCOMBODATA-1; i++)
+		{
+			comboscriptmap[i].clear();
+		}
+		for(int32_t i=0; i<NUMSCRIPTSGENERIC-1; i++)
+		{
+			genericmap[i].clear();
+		}
+		
+		reset_scripts();
+	}
+	
     zquestheader tempheader;
     memset(&tempheader, 0, sizeof(zquestheader));
+	zinfo tempzi;
+	tempzi.clear();
+	load_tmp_zi = &tempzi;
     
     // oldquest flag is set when an unencrypted qst file is suspected.
     bool oldquest = false;
@@ -20368,19 +20422,18 @@ int32_t _lq_int(const char *filename, zquestheader *Header, miscQdata *Misc, zct
 		if(read_ext_zinfo)
 		{
 			PACKFILE *inf=pack_fopen_password(zinfofilename, F_READ, "");
-			ret=readzinfo(inf, ZI);
+			ret=readzinfo(inf, tempzi, tempheader);
 			if(inf) pack_fclose(inf);
 			checkstatus(ret);
 		}
 		else
 		{
-			ret=readzinfo(f, ZI);
+			ret=readzinfo(f, tempzi, tempheader);
 			checkstatus(ret);
 		}
 		box_out("okay.");
 		box_eol();
 	}
-	else ZI.clear();
 	
     if(tempheader.zelda_version>=0x193)
     {
@@ -21066,6 +21119,10 @@ int32_t _lq_int(const char *filename, zquestheader *Header, miscQdata *Misc, zct
     {
         memcpy(Header, &tempheader, sizeof(tempheader));
     }
+    if(keepall&&!get_bit(skip_flags, skip_zinfo))
+    {
+		ZI.copyFrom(tempzi);
+    }
     
     if(!keepall||get_bit(skip_flags, skip_maps))
     {
@@ -21246,6 +21303,7 @@ int32_t loadquest(const char *filename, zquestheader *Header, miscQdata *Misc, z
 	loading_qst_num = qst_num;
 	loadquest_report = report;
 	int32_t ret = _lq_int(filename, Header, Misc, tunes, show_progress, compressed, encrypted, keepall, skip_flags,printmetadata);
+	load_tmp_zi = NULL;
 	loading_qst_name = NULL;
 	loadquest_report = false;
 	loading_qst_num = 0;

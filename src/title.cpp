@@ -2046,6 +2046,37 @@ int32_t readsaves(gamedata *savedata, PACKFILE *f)
 			}
 		}
 		else savedata[i].clear_portal();
+		if(section_version >= 25)
+		{
+			word num_scripts;
+			byte dummybyte;
+			if(!p_igetw(&num_scripts, f, true))
+			{
+				return 73;
+			}
+			for(size_t q=0; q<num_scripts; q++)
+			{
+				if(!p_getc(&dummybyte,f, true))
+					return 74;
+				savedata[i].gen_doscript[q] = dummybyte!=0;
+				if(!p_igetw(&(savedata[i].gen_exitState[q]),f, true))
+					return 75;
+				if(!p_igetw(&(savedata[i].gen_reloadState[q]),f, true))
+					return 76;
+				for(size_t ind = 0; ind < 8; ++ind)
+					if(!p_igetl(&(savedata[i].gen_initd[q][ind]),f, true))
+						return 77;
+				int32_t sz;
+				if(!p_igetl(&sz,f, true))
+					return 78;
+				savedata[i].gen_dataSize[q] = sz;
+				savedata[i].gen_data[q].resize(sz, 0);
+				for(auto ind = 0; ind < sz; ++ind)
+					if(!p_igetl(&(savedata[i].gen_data[q][ind]),f, true))
+						return 79;
+			}
+		}
+		else savedata[i].clear_genscript();
 	}
 	
 	
@@ -2617,6 +2648,30 @@ int32_t writesaves(gamedata *savedata, PACKFILE *f)
 		{
 			return 70;
 		}
+		
+		if(!p_iputw(NUMSCRIPTSGENERIC,f))
+		{
+			new_return(71);
+		}
+		savedata[i].save_genscript(); //read the values into the save object
+		for(size_t q=0; q<NUMSCRIPTSGENERIC; q++)
+        {
+			if(!p_putc(savedata[i].gen_doscript[q] ? 1 : 0,f))
+				return 72;
+			if(!p_iputw(savedata[i].gen_exitState[q],f))
+				return 73;
+			if(!p_iputw(savedata[i].gen_reloadState[q],f))
+				return 74;
+			for(size_t ind = 0; ind < 8; ++ind)
+				if(!p_iputl(savedata[i].gen_initd[q][ind],f))
+					return 75;
+			int32_t sz = savedata[i].gen_dataSize[q];
+			if(!p_iputl(sz,f))
+				return 76;
+			for(auto ind = 0; ind < sz; ++ind)
+				if(!p_iputl(savedata[i].gen_data[q][ind],f))
+					return 77;
+        }
 	}
 	
 	return 0;
@@ -3846,7 +3901,6 @@ int32_t custom_game(int32_t file)
 	bool customized = false;
 	while((ret=zc_popup_dialog(gamemode_dlg,focus_obj))==1)
 	{
-		customized = true;
 		scare_mouse();
 		blit(screen,tmp_scr,scrx,scry,0,0,320,240);
 		unscare_mouse();
@@ -3862,6 +3916,7 @@ int32_t custom_game(int32_t file)
 		
 		if(jwin_file_browse_ex("Load Quest", path, list, &sel, 2048, -1, -1, lfont))
 		{
+			customized = true;
 			//      strcpy(qstpath, path);
 			replace_extension(qstpath,path,"qst",2047);
 			gamemode_dlg[2].dp = get_filename(qstpath);
@@ -3870,13 +3925,13 @@ int32_t custom_game(int32_t file)
 			{
 				gamemode_dlg[4].dp = infostr;
 				gamemode_dlg[5].flags = D_DISABLED;
-			focus_obj = 1;
+				focus_obj = 1;
 			}
 			else
 			{
 				gamemode_dlg[4].dp = infostr;
 				gamemode_dlg[5].flags = D_EXIT;
-			focus_obj = 5;
+				focus_obj = 5;
 			}
 			
 			gamemode_dlg[2].d1 = gamemode_dlg[4].d1 = 0;

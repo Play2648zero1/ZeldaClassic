@@ -64,9 +64,10 @@ public:
     
    
     
-    zfix x,y,z,fall;
+    zfix x,y,z,fall,fakefall,fakez;
     int32_t tile,shadowtile,cs,flip,c_clk,clk,misc;
     zfix xofs,yofs,zofs;
+    zfix shadowxofs,shadowyofs;
     // no hzofs - it's always equal to zofs.
     int32_t hxofs,hyofs,hxsz,hysz,hzsz;
     int32_t txsz,tysz;
@@ -106,7 +107,7 @@ public:
     byte do_animation;
     int32_t rotation;
     int32_t scale; 
-    byte moveflags;
+    int32_t moveflags;
     byte drawflags;
 	byte knockbackflags;
 	byte screenedge;
@@ -124,6 +125,7 @@ public:
 	int32_t drownclk; // Pitfall fall clk
 	int32_t drownCombo; // Pitfall fallen combo
 	bool isspawning;
+	bool can_flicker;
 	
 	byte spr_shadow, spr_death, spr_spawn;
 	int16_t spr_death_anim_clk, spr_spawn_anim_clk;
@@ -154,6 +156,7 @@ public:
     int32_t real_y(zfix fy);
     int32_t real_ground_y(zfix fy);
     int32_t real_z(zfix fz);
+    int32_t fake_z(zfix fz);
     virtual bool hit(sprite *s);
     virtual bool hit(int32_t tx,int32_t ty,int32_t tz,int32_t txsz,int32_t tysz,int32_t tzsz);
     
@@ -164,6 +167,8 @@ public:
 	virtual bool knockback(int32_t time, int32_t dir, int32_t speed);
 	virtual bool runKnockback();
     void explode(int32_t mode);
+	bool getCanFlicker();
+	void setCanFlicker(bool v);
 	
 	void alloc_scriptmem();
 	

@@ -8335,7 +8335,7 @@ int32_t writeitems(PACKFILE *f, zquestheader *Header)
                 new_return(6);
             }
             
-            if(!p_putc(itemsbuf[i].misc,f))
+            if(!p_putc(itemsbuf[i].misc_flags,f))
             {
                 new_return(7);
             }
@@ -8501,10 +8501,13 @@ int32_t writeitems(PACKFILE *f, zquestheader *Header)
                 new_return(38);
             }
             
-            if(!p_putc(itemsbuf[i].magic,f))
-            {
-                new_return(39);
-            }
+			for(auto q = 0; q < 2; ++q)
+			{
+				if(!p_iputw(itemsbuf[i].cost_amount[q],f))
+				{
+					new_return(39);
+				}
+			}
             
             if(!p_iputl(itemsbuf[i].misc3,f))
             {
@@ -8671,9 +8674,12 @@ int32_t writeitems(PACKFILE *f, zquestheader *Header)
 		{
 		    new_return(73);
 		}
-		if(!p_iputl(itemsbuf[i].magiccosttimer,f))
+		for(auto q = 0; q < 2; ++q)
 		{
-		    new_return(74);
+			if(!p_iputl(itemsbuf[i].magiccosttimer[q],f))
+			{
+				new_return(74);
+			}
 		}
 		if(!p_iputl(itemsbuf[i].overrideFLAGS,f))
 		{
@@ -8712,9 +8718,12 @@ int32_t writeitems(PACKFILE *f, zquestheader *Header)
 		    new_return(83);
 		}
 		
-		if(!p_putc(itemsbuf[i].cost_counter,f))
+		for(auto q = 0; q < 2; ++q)
 		{
-		    new_return(84);
+			if(!p_putc(itemsbuf[i].cost_counter[q],f))
+			{
+				new_return(84);
+			}
 		}
 		
 		//InitD[] labels
@@ -11972,6 +11981,7 @@ extern script_data *wpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *lwpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *ewpnscripts[NUMSCRIPTWEAPONS];
 extern script_data *globalscripts[NUMSCRIPTGLOBAL];
+extern script_data *genericscripts[NUMSCRIPTSGENERIC];
 extern script_data *playerscripts[NUMSCRIPTPLAYER];
 extern script_data *screenscripts[NUMSCRIPTSCREEN];
 extern script_data *dmapscripts[NUMSCRIPTSDMAP];
@@ -12087,7 +12097,7 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 new_return(ret);
             }
         }
-        
+		
         for(int32_t i=0; i<NUMSCRIPTPLAYER; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &playerscripts[i]);
@@ -12098,7 +12108,7 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 new_return(ret);
             }
         }
-	
+		
         for(int32_t i=0; i<NUMSCRIPTWEAPONS; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &lwpnscripts[i]);
@@ -12109,8 +12119,8 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 new_return(ret);
             }
         }
-	
-	for(int32_t i=0; i<NUMSCRIPTWEAPONS; i++)
+		
+		for(int32_t i=0; i<NUMSCRIPTWEAPONS; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &ewpnscripts[i]);
             fake_pack_writing=(writecycle==0);
@@ -12121,7 +12131,7 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
             }
         }
         
-	for(int32_t i=0; i<NUMSCRIPTSDMAP; i++)
+		for(int32_t i=0; i<NUMSCRIPTSDMAP; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &dmapscripts[i]);
             fake_pack_writing=(writecycle==0);
@@ -12131,8 +12141,8 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 new_return(ret);
             }
         }
-	
-	for(int32_t i=0; i<NUMSCRIPTSITEMSPRITE; i++)
+		
+		for(int32_t i=0; i<NUMSCRIPTSITEMSPRITE; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &itemspritescripts[i]);
             fake_pack_writing=(writecycle==0);
@@ -12142,10 +12152,25 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 new_return(ret);
             }
         }
-	al_trace("About to write combo script pt 1.\n");
-	for(int32_t i=0; i<NUMSCRIPTSCOMBODATA; i++)
+		
+		for(int32_t i=0; i<NUMSCRIPTSCOMBODATA; i++)
         {
             int32_t ret = write_one_ffscript(f, Header, i, &comboscripts[i]);
+            fake_pack_writing=(writecycle==0);
+            
+            if(ret!=0)
+            {
+                new_return(ret);
+            }
+        }
+		
+		if(!p_iputw(NUMSCRIPTSGENERIC,f))
+		{
+			new_return(2000);
+		}
+		for(int32_t i=0; i<NUMSCRIPTSGENERIC; i++)
+        {
+            int32_t ret = write_one_ffscript(f, Header, i, &genericscripts[i]);
             fake_pack_writing=(writecycle==0);
             
             if(ret!=0)
@@ -12535,10 +12560,9 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 }
             }
         }
-	
-	//combo scripts
-	al_trace("About to write combo script pt 2.\n");
-	word numcombobindings=0;
+		
+		//combo scripts
+		word numcombobindings=0;
         
         for(std::map<int32_t, script_slot_data >::iterator it = comboscriptmap.begin(); it != comboscriptmap.end(); it++)
         {
@@ -12547,13 +12571,47 @@ int32_t writeffscript(PACKFILE *f, zquestheader *Header)
                 numcombobindings++;
             }
         }
-	al_trace("About to write combo script pt 3.\n");
-	if(!p_iputw(numcombobindings, f))
+		if(!p_iputw(numcombobindings, f))
         {
             new_return(2043);
         }
-        al_trace("About to write combo script pt 4.\n");
+		
         for(std::map<int32_t, script_slot_data >::iterator it = comboscriptmap.begin(); it != comboscriptmap.end(); it++)
+        {
+            if(it->second.scriptname != "")
+            {
+                if(!p_iputw(it->first,f))
+                {
+                    new_return(2044);
+                }
+                
+                if(!p_iputl((int32_t)it->second.scriptname.size(), f))
+                {
+                    new_return(2045);
+                }
+                
+                if(!pfwrite((void *)it->second.scriptname.c_str(), (int32_t)it->second.scriptname.size(),f))
+                {
+                    new_return(2046);
+                }
+            }
+        }
+		//generic scripts
+		word numgenericbindings=0;
+        
+        for(auto it = genericmap.begin(); it != genericmap.end(); it++)
+        {
+            if(it->second.scriptname != "")
+            {
+                numgenericbindings++;
+            }
+        }
+		if(!p_iputw(numgenericbindings, f))
+        {
+            new_return(2043);
+        }
+		
+        for(auto it = genericmap.begin(); it != genericmap.end(); it++)
         {
             if(it->second.scriptname != "")
             {

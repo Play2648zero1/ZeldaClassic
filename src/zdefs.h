@@ -30,6 +30,24 @@
 #define DEVTIMESTAMP false
 #endif
 
+
+#define NUMSCRIPTFFC			512
+#define NUMSCRIPTFFCOLD			256
+#define NUMSCRIPTITEM			256
+#define NUMSCRIPTGUYS			256
+#define NUMSCRIPTWEAPONS		256
+#define NUMSCRIPTGLOBAL			8
+#define NUMSCRIPTGLOBAL255OLD	7
+#define NUMSCRIPTGLOBAL253		4
+#define NUMSCRIPTGLOBALOLD		3
+#define NUMSCRIPTHEROOLD		3
+#define NUMSCRIPTPLAYER			5
+#define NUMSCRIPTSCREEN			256
+#define NUMSCRIPTSDMAP			256
+#define NUMSCRIPTSITEMSPRITE	256
+#define NUMSCRIPTSCOMBODATA		512
+#define NUMSCRIPTSGENERIC       512
+
 //Conditional Debugging Compilation
 //Script related
 #define _FFDEBUG
@@ -249,7 +267,7 @@ enum {ENC_METHOD_192B104=0, ENC_METHOD_192B105, ENC_METHOD_192B185, ENC_METHOD_2
 #define V_MAPS            22
 #define V_DMAPS            16
 #define V_DOORS            1
-#define V_ITEMS           51
+#define V_ITEMS           53
 #define V_WEAPONS          7
 #define V_COLORS           4 //Misc Colours
 #define V_ICONS            10 //Game Icons
@@ -258,17 +276,17 @@ enum {ENC_METHOD_192B104=0, ENC_METHOD_192B105, ENC_METHOD_192B185, ENC_METHOD_2
 #define V_GUYS            46
 #define V_MIDIS            4
 #define V_CHEATS           1
-#define V_SAVEGAME        24 //skipped 13->15 for 2.53.1
+#define V_SAVEGAME        25 //skipped 13->15 for 2.53.1
 #define V_COMBOALIASES     3
 #define V_HEROSPRITES      15
 #define V_SUBSCREEN        7
 #define V_ITEMDROPSETS     2
-#define V_FFSCRIPT         19
+#define V_FFSCRIPT         20
 #define V_SFX              8
 #define V_FAVORITES        1
 
-#define V_COMPATRULE       23
-#define V_ZINFO            0
+#define V_COMPATRULE       26
+#define V_ZINFO            2
 
 //= V_SHOPS is under V_MISC
 
@@ -810,7 +828,7 @@ enum
 	//165
 	cBRIDGE, cSIGNPOST, cCSWITCH, cCSWITCHBLOCK, cTORCH,
 	//170
-	cSPOTLIGHT, cGLASS, cLIGHTTARGET, cSWITCHHOOK,
+	cSPOTLIGHT, cGLASS, cLIGHTTARGET, cSWITCHHOOK, cBUTTONPROMPT,
     cMAX,
 	// ! potential new stuff that I might decide it is worth adding. 
     //Five additional user script types, 
@@ -1050,10 +1068,9 @@ enum
 	qr_ITEMCOMBINE_CONTINUOUS, qr_SCC_ITEM_COMBINES_ITEMS, qr_SCROLLING_KILLS_CHARGE, qr_CUSTOMWEAPON_IGNORE_COST,
 	//34
 	qr_BLOCKS_DONT_LOCK_OTHER_LAYERS, qr_SCC_GOTO_RESPECTS_CONTFLAG, qr_BROKEN_KEEPOLD_FLAG, qr_KEEPOLD_APPLIES_RETROACTIVELY,
-	qr_PASSIVE_ITEM_SCRIPT_ONLY_HIGHEST, qr_OLD_HALF_MAGIC, qr_LEVEL_RESTART_CONT_POINT,
-	
+	qr_PASSIVE_ITEM_SCRIPT_ONLY_HIGHEST, qr_OLD_HALF_MAGIC, qr_LEVEL_RESTART_CONT_POINT, qr_SUBSCR_OLD_SELECTOR,
 	//35
-	qr_FIXED_FAIRY_LIMIT = 35*8, qr_FAIRYDIR, qr_ARROWCLIP, qr_CONT_SWORD_TRIGGERS, 
+	qr_OLD_FAIRY_LIMIT, qr_FAIRYDIR, qr_ARROWCLIP, qr_CONT_SWORD_TRIGGERS, 
 	qr_OLD_210_WATER, qr_8WAY_SHOT_SFX, qr_COPIED_SWIM_SPRITES, qr_WRONG_BRANG_TRAIL_DIR,
 	//36
 	qr_192b163_WARP, qr_210_WARPRETURN, qr_LESS_AWFUL_SIDESPIKES, qr_OLD_LADDER_ITEM_SIDEVIEW,
@@ -1075,6 +1092,9 @@ enum
 	qr_QUAKE_STUNS_LEEVERS, qr_GANON_CANT_SPAWN_ON_CONTINUE, qr_WIZZROBES_DONT_OBEY_STUN, qr_OLD_BUG_NET,
 	//42
 	qr_MANHANDLA_BLOCK_SFX, qr_GRASS_SENSITIVE, qr_BETTER_RAFT, qr_BETTER_RAFT_2,
+	qr_RAFT_SOUND, qr_WARPS_RESTART_DMAPSCRIPT, qr_DMAP_0_CONTINUE_BUG, qr_SCRIPT_WARPS_DMAP_SCRIPT_TOGGLE,
+	//43
+	qr_OLD_SCRIPTED_KNOCKBACK, qr_OLD_KEESE_Z_AXIS, qr_POLVIRE_NO_SHADOW,
 	
 	//50
 	
@@ -1133,10 +1153,15 @@ enum
 };
 
 // directions
-enum direction { up, down, left, right, l_up, r_up, l_down, r_down };
+enum direction { dir_invalid = -1, up, down, left, right, l_up, r_up, l_down, r_down };
 const direction oppositeDir[]= {down, up, right, left, r_down, l_down, r_up, l_up};
 const direction normalDir[]={up,down,left,right,l_up,r_up,l_down,r_down,up,r_up,right,r_down,down,l_down,left,l_up};
+const direction xDir[] = { dir_invalid,dir_invalid,left,right,left,right,left,right };
+const direction yDir[] = { up,down,dir_invalid,dir_invalid,up,up,down,down };
+int32_t X_DIR(int32_t dir);
+int32_t Y_DIR(int32_t dir);
 #define NORMAL_DIR(dir)    ((dir >= 0 && dir < 16) ? normalDir[dir] : -1)
+
 // refill stuff
 enum { REFILL_NONE, REFILL_FAIRYDONE, REFILL_LIFE, REFILL_MAGIC, REFILL_ALL};
 #define REFILL_FAIRY -1
@@ -1822,7 +1847,7 @@ enum
 struct itemdata
 {
     int32_t tile;
-    byte misc;                                                // 0000vhtf (vh:flipping, t:two hands, f:flash)
+    byte misc_flags;                                                // 0000vhtf (vh:flipping, t:two hands, f:flash)
     byte csets;                                               // ffffcccc (f:flash cset, c:cset)
     byte frames;                                              // animation frame count
     byte speed;                                               // animation speed
@@ -1859,10 +1884,7 @@ struct itemdata
 #define ITEM_VALIDATEONLY       0x01000000
 #define ITEM_SIDESWIM_DISABLED  0x02000000
 #define ITEM_BUNNY_ENABLED      0x04000000
-
-
-
-
+#define ITEM_VALIDATEONLY2      0x08000000
     word script;												// Which script the item is using
     char count;
     word amount;
@@ -1894,7 +1916,7 @@ struct itemdata
     int32_t misc8;
     int32_t misc9;
     int32_t misc10;
-    byte magic; // Magic usage!
+	int16_t cost_amount[2]; // Magic usage!
     byte usesound, usesound2;
     byte useweapon; //lweapon id type -Z
     byte usedefence; //default defence type -Z
@@ -1944,8 +1966,8 @@ struct itemdata
     
     word weaponscript; //If only. -Z This would link an item to a weapon script in the item editor.
     int32_t wpnsprite; //enemy weapon sprite. 
-    int32_t magiccosttimer; //TImer for timed magic costs. 
-    char cost_counter; //replaces mp cost with a list
+    int32_t magiccosttimer[2]; 
+    char cost_counter[2];
     
     char initD_label[8][65];
     char weapon_initD_label[8][65];
@@ -1954,6 +1976,42 @@ struct itemdata
     int32_t sprite_initiald[INITIAL_D];
     byte sprite_initiala[INITIAL_A];
     word sprite_script;
+	
+	//helper functions because stupid shit
+	int32_t misc(size_t ind) const
+	{
+		switch(ind)
+		{
+			case 0: return misc1;
+			case 1: return misc2;
+			case 2: return misc3;
+			case 3: return misc4;
+			case 4: return misc5;
+			case 5: return misc6;
+			case 6: return misc7;
+			case 7: return misc8;
+			case 8: return misc9;
+			case 9: return misc10;
+		}
+		return 0;
+	}
+	void misc(size_t ind, int32_t val)
+	{
+		switch(ind)
+		{
+			case 0: misc1 = val; break;
+			case 1: misc2 = val; break;
+			case 2: misc3 = val; break;
+			case 3: misc4 = val; break;
+			case 4: misc5 = val; break;
+			case 5: misc6 = val; break;
+			case 6: misc7 = val; break;
+			case 7: misc8 = val; break;
+			case 8: misc9 = val; break;
+			case 9: misc10 = val; break;
+		}
+		return;
+	}
 };
 
 struct wpndata
@@ -2187,6 +2245,9 @@ struct guydata
 #define FLAG_ONLY_WATERWALK    0x20 //Only walks on water
 #define FLAG_ONLY_SHALLOW_WATERWALK 0x40 //Only walks on shallow water
 #define FLAG_ONLY_PITWALK 0x80 //Only walks on pitfalls
+#define FLAG_NO_FAKE_Z 0x100
+#define FLAG_NO_REAL_Z 0x200
+#define FLAG_USE_FAKE_Z 0x400
 
 class refInfo
 {
@@ -2208,7 +2269,7 @@ public:
 	dword dropsetref, pondref, warpringref, doorsref, zcoloursref, rgbref, paletteref, palcycleref, tunesref;
 	dword gamedataref, cheatsref; 
 	dword fileref, subscreenref, comboidref, directoryref, rngref;
-	dword bottletyperef, bottleshopref;
+	dword bottletyperef, bottleshopref, genericdataref;
 	int32_t combosref, comboposref;
 	//byte ewpnclass, lwpnclass, guyclass; //Not implemented
 	
@@ -2226,7 +2287,7 @@ public:
 		paletteref = 0, palcycleref = 0, tunesref = 0,
 		gamedataref = 0, cheatsref = 0; 
 		fileref = 0, subscreenref = 0;
-		comboidref = 0; directoryref = 0; rngref = 0; bottletyperef = 0; bottleshopref = 0;
+		comboidref = 0; directoryref = 0; rngref = 0; bottletyperef = 0; bottleshopref = 0; genericdataref = 0;
 		comboposref = 0;
 		memset(d, 0, 8 * sizeof(int32_t));
 		a[0] = a[1] = 0;
@@ -2257,7 +2318,7 @@ public:
 		paletteref = rhs.paletteref, palcycleref = rhs.palcycleref, tunesref = rhs.tunesref,
 		gamedataref = rhs.gamedataref, cheatsref = rhs.cheatsref; 
 		fileref = rhs.fileref, subscreenref = rhs.subscreenref, directoryref = rhs.directoryref, rngref = rhs.rngref;
-		bottletyperef = rhs.bottletyperef, bottleshopref = rhs.bottleshopref;
+		bottletyperef = rhs.bottletyperef, bottleshopref = rhs.bottleshopref, genericdataref = rhs.genericdataref;
 		memcpy(d, rhs.d, 8 * sizeof(int32_t));
 		memcpy(a, rhs.a, 2 * sizeof(int32_t));
 		switchkey = rhs.switchkey;
@@ -2706,6 +2767,8 @@ struct mapscr
 #define SCRIPT_PASSIVESUBSCREEN			13
 #define SCRIPT_COMBO					14
 #define SCRIPT_ONMAP					15
+#define SCRIPT_GENERIC                  16
+#define SCRIPT_GENERIC_FROZEN           17
 
 #define ZMETA_AUTOGEN		0x01
 #define ZMETA_DISASSEMBLED	0x02
@@ -4101,7 +4164,7 @@ enum // used for gamedata ITEMS
 	itype_script1 = 256, //Scripted Weapons
 	itype_script2, itype_script3, itype_script4, itype_script5, itype_script6, itype_script7, itype_script8, itype_script9, itype_script10,
 	itype_icerod, itype_atkring, itype_lantern, itype_pearl, itype_bottle, itype_bottlefill, itype_bugnet,
-	itype_mirror, itype_switchhook, itype_itmbundle, itype_progressive_itm, itype_note,
+	itype_mirror, itype_switchhook, itype_itmbundle, itype_progressive_itm, itype_note, itype_refill,
 	/*
 	itype_templast,
 	itype_ether, itype_bombos, itype_quake, 
@@ -4282,6 +4345,13 @@ struct gamedata
 	int32_t portalwarpfx;
 	int16_t portalspr;
 	
+	bool gen_doscript[NUMSCRIPTSGENERIC];
+	word gen_exitState[NUMSCRIPTSGENERIC];
+	word gen_reloadState[NUMSCRIPTSGENERIC];
+	int32_t gen_initd[NUMSCRIPTSGENERIC][8];
+	int32_t gen_dataSize[NUMSCRIPTSGENERIC];
+	std::vector<int32_t> gen_data[NUMSCRIPTSGENERIC];
+	
 	// member functions
 	// public:
 	gamedata()
@@ -4294,6 +4364,9 @@ struct gamedata
 	
 	void Clear(); // This is a forward declaration. Real decl in gamedata.cpp.
 	void Copy(const gamedata& g);
+	void clear_genscript();
+	void load_genscript();
+	void save_genscript();
 	
 	gamedata &operator = (const gamedata& data)
 	{
@@ -4690,8 +4763,6 @@ struct zcmodule
 	
 	char enem_type_names[eeMAX][255];
 	char enem_anim_type_names[aMAX][255];
-	char combo_type_names[cMAX][255];
-	char combo_flag_names[mfMAX][255];
 	char roomtype_names[rMAX][255];
 	char walkmisc7_names[e7tEATHURT+1][255];
 	char walkmisc9_names[e9tARMOS+1][255];
@@ -4699,7 +4770,6 @@ struct zcmodule
 	char enemy_weapon_names[wMax-wEnemyWeapons][255];
 	char enemy_scriptweaponweapon_names[10][255];
 	char player_weapon_names[wIce+1][255];
-	char counter_names[33][255];
 	
 	char base_NSF_file[1024];
 	char copyright_strings[3][2048];
@@ -4754,6 +4824,7 @@ struct zcmodule
 #define GAMEFLAG_SCRIPTMENU_ACTIVE  0x02
 #define GAMEFLAG_F6SCRIPT_ACTIVE    0x04
 #define GAMEFLAG_RESET_GAME_LOOP    0x08
+#define GAMEFLAG_NO_F6              0x10
 
 #define DCLICK_START      0
 #define DCLICK_RELEASE    1
@@ -5265,21 +5336,6 @@ int32_t computeOldStyleBitfield(zinitdata *source, itemdata *items, int32_t fami
 
 extern void flushItemCache();
 extern void removeFromItemCache(int32_t itemid);
-#define NUMSCRIPTFFC			512
-#define NUMSCRIPTFFCOLD			256
-#define NUMSCRIPTITEM			256
-#define NUMSCRIPTGUYS			256
-#define NUMSCRIPTWEAPONS		256
-#define NUMSCRIPTGLOBAL			8
-#define NUMSCRIPTGLOBAL255OLD	7
-#define NUMSCRIPTGLOBAL253		4
-#define NUMSCRIPTGLOBALOLD		3
-#define NUMSCRIPTHEROOLD		3
-#define NUMSCRIPTPLAYER			5
-#define NUMSCRIPTSCREEN			256
-#define NUMSCRIPTSDMAP			256
-#define NUMSCRIPTSITEMSPRITE	256
-#define NUMSCRIPTSCOMBODATA		512
 
 #define GLOBAL_SCRIPT_INIT 			0
 #define GLOBAL_SCRIPT_GAME			1
@@ -5362,6 +5418,8 @@ void load_colorset(int32_t colorset);
 #include "process_managment.h"
 
 void update_hw_screen(bool force = false);
+
+bool valid_str(char const* ptr, char cancel = 0);
 
 #endif                                                      //_ZDEFS_H_
 

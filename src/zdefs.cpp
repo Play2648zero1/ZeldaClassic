@@ -630,3 +630,22 @@ void MsgStr::clear()
 	shadow_color=0;
 	listpos=0;
 }
+
+bool valid_str(char const* ptr, char cancel)
+{
+	return ptr && ptr[0] && ptr[0] != cancel;
+}
+
+int32_t X_DIR(int32_t dir)
+{
+	dir = NORMAL_DIR(dir);
+	if(dir < 0) return dir;
+	return xDir[dir];
+}
+int32_t Y_DIR(int32_t dir)
+{
+	dir = NORMAL_DIR(dir);
+	if(dir < 0) return dir;
+	return yDir[dir];
+}
+
